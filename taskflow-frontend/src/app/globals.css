@@ -1,20 +1,48 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;1,9..40,300&display=swap');
 
-@layer base {
-  :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
-  }
+@import "tailwindcss";
+
+@theme {
+  --font-family-syne: 'Syne', sans-serif;
+  --font-family-dm:   'DM Sans', sans-serif;
+
+  --color-ink:       #0d0f14;
+  --color-ink-soft:  #3a3d4a;
+  --color-ink-muted: #7c8096;
+  --color-paper:     #f8f7f4;
+  --color-cream:     #f0ede6;
+  --color-amber:     #e8913a;
+  --color-teal:      #2a7d6e;
+  --color-surface:   #ffffff;
+  --color-error:     #e74c3c;
+  --color-success:   #27ae60;
 }
 
-@layer utilities {
-  .line-clamp-2 {
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-    line-clamp: 2;
-  }
+:root {
+  --ink:        #0d0f14;
+  --ink-soft:   #3a3d4a;
+  --ink-muted:  #7c8096;
+  --paper:      #f8f7f4;
+  --cream:      #f0ede6;
+  --amber:      #e8913a;
+  --amber-dim:  rgba(232, 145, 58, 0.12);
+  --teal:       #2a7d6e;
+  --teal-dim:   rgba(42, 125, 110, 0.10);
+  --surface:    #ffffff;
+  --sidebar-bg: #0d0f14;
+  --error:      #e74c3c;
+  --success:    #27ae60;
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: 'DM Sans', sans-serif;
+}
+
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }

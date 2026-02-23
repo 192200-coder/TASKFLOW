@@ -1,4 +1,6 @@
 // tailwind.config.js
+// En Tailwind v4 la configuración se hace en globals.css con @theme.
+// Este archivo puede estar vacío o no existir.
 /** @type {import('tailwindcss').Config} */
 module.exports = {
   content: [
@@ -6,14 +8,4 @@ module.exports = {
     './src/components/**/*.{js,ts,jsx,tsx,mdx}',
     './src/app/**/*.{js,ts,jsx,tsx,mdx}',
   ],
-  theme: {
-    extend: {
-      colors: {
-        border: "hsl(var(--border))",
-        background: "hsl(var(--background))",
-        foreground: "hsl(var(--foreground))",
-      },
-    },
-  },
-  plugins: [],
-}
+};
