@@ -1,0 +1,11 @@
+# Archivos globales del proyecto (muy pocos)
+.DS_Store
+*.log
+.vscode/
+.idea/
+*.swp
+*.swo
+Thumbs.db
+
+# Nota: Las carpetas backend/frontend se ignoran en sus propios .gitignore
+# No incluir node_modules aquí porque están en subcarpetas
