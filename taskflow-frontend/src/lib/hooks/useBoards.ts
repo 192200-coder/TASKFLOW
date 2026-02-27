@@ -15,12 +15,10 @@ export const useBoards = () => {
   const [boards, setBoards] = useState<BoardsState>({ owned: [], member: [] });
   const [loading, setLoading] = useState(true);
 
-  const splitBoards = (allBoards: Board[], userId: number): BoardsState => {
-    return {
-      owned:  allBoards.filter(b => b.owner_id === userId),
-      member: allBoards.filter(b => b.owner_id !== userId),
-    };
-  };
+  const splitBoards = (allBoards: Board[], userId: number): BoardsState => ({
+    owned:  allBoards.filter(b => b.owner_id === userId),
+    member: allBoards.filter(b => b.owner_id !== userId),
+  });
 
   const fetchBoards = async () => {
     if (!user) return;
@@ -34,19 +32,43 @@ export const useBoards = () => {
     }
   };
 
-  const createBoard = async (data: Partial<Board>) => {
+  const createBoard = async (data: Partial<Board>): Promise<Board | null> => {
     try {
-      // Backend devuelve { message, board }
+      // El backend ahora devuelve { message, board } con el board COMPLETO
+      // (columns con tasks vacías + members + owner) — listo para usar sin refrescar
       const response = await boardsApi.createBoard(data);
       const newBoard: Board = response.board;
-      setBoards(prev => ({
-        ...prev,
-        owned: [newBoard, ...prev.owned],
-      }));
+
+      // ✅ Añadir al estado local sin necesidad de re-fetch
+      if (user) {
+        setBoards(prev =>
+          newBoard.owner_id === user.id
+            ? { ...prev, owned: [newBoard, ...prev.owned] }
+            : { ...prev, member: [newBoard, ...prev.member] }
+        );
+      }
+
       toast.success('Tablero creado');
-      return response;
+      return newBoard;
     } catch (error) {
       toast.error('Error al crear tablero');
+      throw error;
+    }
+  };
+
+  const deleteBoard = async (boardId: number): Promise<void> => {
+    // Optimistic update
+    setBoards(prev => ({
+      owned:  prev.owned.filter(b => b.id !== boardId),
+      member: prev.member.filter(b => b.id !== boardId),
+    }));
+    try {
+      await boardsApi.deleteBoard(boardId);
+      toast.success('Tablero eliminado');
+    } catch (error) {
+      // Revertir y recargar si falla
+      await fetchBoards();
+      toast.error('Error al eliminar tablero');
       throw error;
     }
   };
@@ -55,5 +77,5 @@ export const useBoards = () => {
     fetchBoards();
   }, [user]);
 
-  return { boards, loading, createBoard, refreshBoards: fetchBoards };
+  return { boards, loading, createBoard, deleteBoard, refreshBoards: fetchBoards };
 };

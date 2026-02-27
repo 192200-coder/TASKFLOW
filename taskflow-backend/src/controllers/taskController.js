@@ -6,7 +6,6 @@ const sequelize = require('../config/database');
 // ─── Crear tarea ──────────────────────────────────────────────────────────────
 const createTask = async (req, res) => {
   const transaction = await sequelize.transaction();
-
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -14,7 +13,6 @@ const createTask = async (req, res) => {
       return res.status(400).json({ errors: errors.array() });
     }
 
-    // ⚠️ Configurar sql_mode para esta transacción
     await sequelize.query(
       "SET SESSION sql_mode = 'NO_ENGINE_SUBSTITUTION'",
       { transaction }
@@ -22,8 +20,7 @@ const createTask = async (req, res) => {
 
     const { title, description, column_id, position, priority, due_date, assigned_to } = req.body;
 
-    // ✅ IMPORTANTE: No incluir created_at y updated_at en el INSERT
-    const [result] = await sequelize.query(
+    const [taskId] = await sequelize.query(
       `INSERT INTO tasks 
        (title, description, priority, due_date, position, column_id, assigned_to, created_by, updated_by)
        VALUES 
@@ -39,13 +36,10 @@ const createTask = async (req, res) => {
           assigned_to: assigned_to || null,
           created_by: req.user.id,
           updated_by: req.user.id,
-          // ❌ ELIMINADOS created_at y updated_at
         },
         transaction,
       }
     );
-
-    const taskId = result;
 
     await TaskHistory.create({
       task_id: taskId,
@@ -76,7 +70,6 @@ const createTask = async (req, res) => {
 const getTaskDetails = async (req, res) => {
   try {
     const { taskId } = req.params;
-
     const task = await Task.findByPk(taskId, {
       include: [
         { model: User, as: 'assignee', attributes: ['id', 'name', 'avatar_url'] },
@@ -90,11 +83,7 @@ const getTaskDetails = async (req, res) => {
         },
       ],
     });
-
-    if (!task) {
-      return res.status(404).json({ error: 'Tarea no encontrada' });
-    }
-
+    if (!task) return res.status(404).json({ error: 'Tarea no encontrada' });
     res.json(task);
   } catch (error) {
     console.error('Error al obtener tarea:', error);
@@ -105,7 +94,6 @@ const getTaskDetails = async (req, res) => {
 // ─── Actualizar tarea ─────────────────────────────────────────────────────────
 const updateTask = async (req, res) => {
   const transaction = await sequelize.transaction();
-
   try {
     const { taskId } = req.params;
     const { title, description, priority, due_date, assigned_to } = req.body;
@@ -131,21 +119,21 @@ const updateTask = async (req, res) => {
       due_date:    due_date    !== undefined ? due_date    : task.due_date,
       assigned_to: assigned_to !== undefined ? assigned_to : task.assigned_to,
       updated_by:  req.user.id,
-      updated_at: new Date(),  // ← añadir
+      updated_at:  new Date(),
     }, { transaction });
 
     // Historial de cambios
     const fields = ['title', 'description', 'priority', 'due_date', 'assigned_to'];
     for (const field of fields) {
       const newVal = req.body[field];
-      if (newVal !== undefined && String(oldValues[field] ?? '') !== String(task[field] ?? '')) {
+      if (newVal !== undefined && String(oldValues[field] ?? '') !== String(newVal ?? '')) {
         await TaskHistory.create({
           task_id:       task.id,
           user_id:       req.user.id,
           action:        'UPDATE',
           field_changed: field,
           old_value:     String(oldValues[field] ?? ''),
-          new_value:     String(task[field] ?? ''),
+          new_value:     String(newVal ?? ''),
         }, { transaction });
       }
     }
@@ -170,19 +158,15 @@ const updateTask = async (req, res) => {
 // ─── Eliminar tarea ───────────────────────────────────────────────────────────
 const deleteTask = async (req, res) => {
   const transaction = await sequelize.transaction();
-
   try {
     const { taskId } = req.params;
-
     const task = await Task.findByPk(taskId);
     if (!task) {
       await transaction.rollback();
       return res.status(404).json({ error: 'Tarea no encontrada' });
     }
-
     await task.destroy({ transaction });
     await transaction.commit();
-
     res.json({ message: 'Tarea eliminada exitosamente' });
   } catch (error) {
     await transaction.rollback();
@@ -194,10 +178,14 @@ const deleteTask = async (req, res) => {
 // ─── Mover tarea ──────────────────────────────────────────────────────────────
 const moveTask = async (req, res) => {
   const transaction = await sequelize.transaction();
-
   try {
     const { taskId } = req.params;
     const { column_id, position } = req.body;
+
+    if (column_id === undefined || position === undefined) {
+      await transaction.rollback();
+      return res.status(400).json({ error: 'column_id y position son requeridos' });
+    }
 
     const task = await Task.findByPk(taskId);
     if (!task) {
@@ -207,14 +195,24 @@ const moveTask = async (req, res) => {
 
     const oldColumnId = task.column_id;
 
-    await task.update({
-      column_id:  column_id  !== undefined ? column_id  : task.column_id,
-      position:   position   !== undefined ? position   : task.position,
-      updated_by: req.user.id,
-      updated_at: new Date(),
-    }, { transaction });
+    // ✅ Query directa — evita el bug de timestamps: false con .update()
+    await sequelize.query(
+      `UPDATE tasks 
+       SET column_id = :column_id, position = :position, updated_by = :updated_by, updated_at = NOW()
+       WHERE id = :taskId`,
+      {
+        replacements: {
+          column_id,
+          position,
+          updated_by: req.user.id,
+          taskId,
+        },
+        transaction,
+      }
+    );
 
-    if (column_id && String(oldColumnId) !== String(column_id)) {
+    // Registrar en historial solo si cambió de columna
+    if (String(oldColumnId) !== String(column_id)) {
       await TaskHistory.create({
         task_id:       task.id,
         user_id:       req.user.id,
@@ -227,7 +225,15 @@ const moveTask = async (req, res) => {
 
     await transaction.commit();
 
-    res.json({ message: 'Tarea movida exitosamente', task });
+    // Devolver la tarea actualizada
+    const updatedTask = await Task.findByPk(taskId, {
+      include: [
+        { model: User, as: 'assignee', attributes: ['id', 'name', 'avatar_url'] },
+        { model: User, as: 'creator',  attributes: ['id', 'name'] },
+      ],
+    });
+
+    res.json({ message: 'Tarea movida exitosamente', task: updatedTask });
   } catch (error) {
     await transaction.rollback();
     console.error('Error al mover tarea:', error);
@@ -242,9 +248,7 @@ const addComment = async (req, res) => {
     const { content } = req.body;
 
     const task = await Task.findByPk(taskId);
-    if (!task) {
-      return res.status(404).json({ error: 'Tarea no encontrada' });
-    }
+    if (!task) return res.status(404).json({ error: 'Tarea no encontrada' });
 
     const comment = await TaskComment.create({
       content,
@@ -263,17 +267,47 @@ const addComment = async (req, res) => {
   }
 };
 
+// ─── Obtener comentarios ──────────────────────────────────────────────────────
+const getComments = async (req, res) => {
+  try {
+    const { taskId } = req.params;
+    const comments = await TaskComment.findAll({
+      where: { task_id: taskId },
+      include: [{ model: User, as: 'user', attributes: ['id', 'name', 'avatar_url'] }],
+      order: [['created_at', 'ASC']],
+    });
+    res.json(comments);
+  } catch (error) {
+    console.error('Error al obtener comentarios:', error);
+    res.status(500).json({ error: 'Error al obtener los comentarios' });
+  }
+};
+
+// ─── Eliminar comentario ──────────────────────────────────────────────────────
+const deleteComment = async (req, res) => {
+  try {
+    const { taskId, commentId } = req.params;
+    const comment = await TaskComment.findOne({
+      where: { id: commentId, task_id: taskId, user_id: req.user.id },
+    });
+    if (!comment) return res.status(404).json({ error: 'Comentario no encontrado o sin permisos' });
+    await comment.destroy();
+    res.json({ message: 'Comentario eliminado exitosamente' });
+  } catch (error) {
+    console.error('Error al eliminar comentario:', error);
+    res.status(500).json({ error: 'Error al eliminar el comentario' });
+  }
+};
+
 // ─── Historial de tarea ───────────────────────────────────────────────────────
 const getTaskHistory = async (req, res) => {
   try {
     const { taskId } = req.params;
-
     const history = await TaskHistory.findAll({
       where: { task_id: taskId },
       include: [{ model: User, as: 'user', attributes: ['id', 'name', 'avatar_url'] }],
       order: [['created_at', 'DESC']],
     });
-
     res.json(history);
   } catch (error) {
     console.error('Error al obtener historial:', error);
@@ -281,4 +315,7 @@ const getTaskHistory = async (req, res) => {
   }
 };
 
-module.exports = { createTask, getTaskDetails, updateTask, deleteTask, moveTask, addComment, getTaskHistory };
+module.exports = {
+  createTask, getTaskDetails, updateTask, deleteTask,
+  moveTask, addComment, getComments, deleteComment, getTaskHistory,
+};

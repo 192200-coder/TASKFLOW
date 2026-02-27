@@ -1,7 +1,43 @@
-// src/controllers/boardController.js  — VERSIÓN COMPLETA ACTUALIZADA
+// src/controllers/boardController.js
 const { Board, BoardMember, Column, Task, User } = require('../models');
 const sequelize = require('../config/database');
 const { validationResult } = require('express-validator');
+
+// ─── Helper: fetch completo del board (reutilizable) ─────────────────────────
+const fetchFullBoard = (boardId) =>
+  Board.findByPk(boardId, {
+    include: [
+      {
+        model: Column,
+        as: 'columns',
+        include: [
+          {
+            model: Task,
+            as: 'tasks',
+            include: [
+              { model: User, as: 'assignee', attributes: ['id', 'name', 'avatar_url'] },
+              { model: User, as: 'creator',  attributes: ['id', 'name'] },
+            ],
+          },
+        ],
+      },
+      {
+        model: User,
+        as: 'members',
+        attributes: ['id', 'name', 'email', 'avatar_url'],
+        through: { attributes: ['role', 'joined_at'] },
+      },
+      {
+        model: User,
+        as: 'owner',
+        attributes: ['id', 'name', 'email', 'avatar_url'],
+      },
+    ],
+    order: [
+      [{ model: Column, as: 'columns' }, 'position', 'ASC'],
+      [{ model: Column, as: 'columns' }, { model: Task, as: 'tasks' }, 'position', 'ASC'],
+    ],
+  });
 
 // ─── Crear tablero ────────────────────────────────────────────────────────────
 const createBoard = async (req, res) => {
@@ -12,6 +48,7 @@ const createBoard = async (req, res) => {
       await transaction.rollback();
       return res.status(400).json({ errors: errors.array() });
     }
+
     const { name, description, cover_image_url } = req.body;
     const owner_id = req.user.id;
 
@@ -19,22 +56,26 @@ const createBoard = async (req, res) => {
       { name, description, cover_image_url, owner_id },
       { transaction }
     );
+
     await BoardMember.create(
       { board_id: board.id, user_id: owner_id, role: 'admin' },
       { transaction }
     );
+
     const defaultColumns = [
       { name: 'Por Hacer',   position: 0, board_id: board.id },
       { name: 'En Progreso', position: 1, board_id: board.id },
       { name: 'Hecho',       position: 2, board_id: board.id },
     ];
     await Column.bulkCreate(defaultColumns, { transaction });
+
     await transaction.commit();
 
-    const boardWithColumns = await Board.findByPk(board.id, {
-      include: [{ model: Column, as: 'columns' }],
-    });
-    res.status(201).json({ message: 'Tablero creado exitosamente', board: boardWithColumns });
+    // ✅ Devolver el board completo con members, columns y owner
+    // para que el frontend pueda mostrarlo sin refrescar
+    const fullBoard = await fetchFullBoard(board.id);
+
+    res.status(201).json({ message: 'Tablero creado exitosamente', board: fullBoard });
   } catch (error) {
     await transaction.rollback();
     console.error('Error al crear tablero:', error);
@@ -61,6 +102,11 @@ const getMyBoards = async (req, res) => {
           attributes: ['id', 'name', 'email', 'avatar_url'],
           through: { attributes: ['role'] },
         },
+        {
+          model: User,
+          as: 'owner',
+          attributes: ['id', 'name', 'email', 'avatar_url'],
+        },
       ],
       order: [['created_at', 'DESC']],
     });
@@ -76,7 +122,6 @@ const getBoardById = async (req, res) => {
   try {
     const { boardId } = req.params;
 
-    // Verificar membresía antes de la consulta pesada
     const isMember = await BoardMember.findOne({
       where: { board_id: boardId, user_id: req.user.id },
     });
@@ -84,35 +129,7 @@ const getBoardById = async (req, res) => {
       return res.status(403).json({ error: 'No tienes acceso a este tablero' });
     }
 
-    const board = await Board.findByPk(boardId, {
-      include: [
-        {
-          model: Column,
-          as: 'columns',
-          include: [
-            {
-              model: Task,
-              as: 'tasks',
-              include: [
-                { model: User, as: 'assignee', attributes: ['id', 'name', 'avatar_url'] },
-                { model: User, as: 'creator',  attributes: ['id', 'name'] },
-              ],
-            },
-          ],
-        },
-        {
-          model: User,
-          as: 'members',
-          attributes: ['id', 'name', 'email', 'avatar_url'],
-          through: { attributes: ['role', 'joined_at'] },
-        },
-      ],
-      order: [
-        [{ model: Column, as: 'columns' }, 'position', 'ASC'],
-        [{ model: Column, as: 'columns' }, { model: Task, as: 'tasks' }, 'position', 'ASC'],
-      ],
-    });
-
+    const board = await fetchFullBoard(boardId);
     if (!board) {
       return res.status(404).json({ error: 'Tablero no encontrado' });
     }
@@ -129,6 +146,7 @@ const updateBoard = async (req, res) => {
   try {
     const { boardId } = req.params;
     const { name, description, cover_image_url } = req.body;
+
     const board = await Board.findByPk(boardId);
     if (!board) return res.status(404).json({ error: 'Tablero no encontrado' });
 
@@ -168,6 +186,7 @@ const inviteMember = async (req, res) => {
   try {
     const { boardId } = req.params;
     const { email, role } = req.body;
+
     const membership = await BoardMember.findOne({
       where: { board_id: boardId, user_id: req.user.id, role: 'admin' },
     });
@@ -182,7 +201,18 @@ const inviteMember = async (req, res) => {
     if (existingMember) return res.status(400).json({ error: 'El usuario ya es miembro del tablero' });
 
     await BoardMember.create({ board_id: boardId, user_id: user.id, role: role || 'member' });
-    res.json({ message: 'Miembro agregado exitosamente' });
+
+    // ✅ Devolver el usuario agregado para que el frontend actualice la UI
+    res.json({
+      message: 'Miembro agregado exitosamente',
+      member: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        avatar_url: user.avatar_url,
+        role: role || 'member',
+      },
+    });
   } catch (error) {
     console.error('Error al invitar miembro:', error);
     res.status(500).json({ error: 'Error al invitar miembro' });

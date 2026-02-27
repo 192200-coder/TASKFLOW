@@ -2,15 +2,15 @@
 require('dotenv').config();
 const app = require('./src/app');
 const sequelize = require('./src/config/database');
+const { initializeDatabase } = require('./src/config/database');
 const { server: serverConfig } = require('./src/config/environment');
 
 const PORT = serverConfig.port;
 
-// Sincronizar base de datos y arrancar servidor
 const startServer = async () => {
   try {
-    await sequelize.authenticate();
-    console.log('✅ Conexión a la base de datos establecida correctamente');
+    // ✅ Usar initializeDatabase para verificar conexión y configurar sql_mode
+    await initializeDatabase();
 
     app.listen(PORT, () => {
       console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`);

@@ -5,6 +5,7 @@ import { createContext, useContext, useEffect, useState } from 'react';
 import { User } from '@/lib/types/user';
 import { authApi } from '@/lib/api/auth';
 import { useRouter } from 'next/navigation';
+import toast from 'react-hot-toast';
 
 interface AuthContextType {
   user: User | null;
@@ -28,7 +29,9 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           const userData = await authApi.getProfile();
           setUser(userData);
         } catch {
+          // Token inválido o expirado → limpiar
           localStorage.removeItem('token');
+          document.cookie = 'token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
         }
       }
       setLoading(false);
@@ -37,8 +40,12 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   }, []);
 
   const logout = () => {
+    // Limpiar token de ambos lados
     localStorage.removeItem('token');
+    document.cookie = 'token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+    // Limpiar estado del usuario
     setUser(null);
+    toast.success('Sesión cerrada');
     router.push('/login');
   };
 

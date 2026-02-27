@@ -1,4 +1,3 @@
-// src/app/(auth)/register/page.tsx
 'use client';
 
 import { useForm } from 'react-hook-form';
@@ -20,6 +19,28 @@ const registerSchema = z.object({
 });
 
 type RegisterForm = z.infer<typeof registerSchema>;
+
+// Componente reutilizable del logo con link al home
+const LogoLink = ({ dark = false }: { dark?: boolean }) => (
+  <Link
+    href="/"
+    className="flex items-center gap-2 hover:opacity-80 transition-opacity"
+    style={{
+      fontFamily: "'Syne', sans-serif",
+      fontWeight: 800,
+      fontSize: '1.25rem',
+      color: dark ? 'white' : 'var(--ink)',
+      letterSpacing: '-.02em',
+      textDecoration: 'none',
+    }}
+  >
+    <span
+      className="inline-block w-2 h-2 rounded-full"
+      style={{ background: 'var(--teal-dim)', boxShadow: '0 0 10px rgba(91,184,168,.8)' }}
+    />
+    TaskFlow
+  </Link>
+);
 
 export default function RegisterPage() {
   const { register: registerUser, loading } = useAuth();
@@ -47,13 +68,9 @@ export default function RegisterPage() {
         <div className="absolute rounded-full pointer-events-none" style={{ width: 400, height: 400, top: -100, right: -100, background: 'radial-gradient(circle, rgba(42,125,110,.28) 0%, transparent 70%)', filter: 'blur(60px)', animation: 'float1 9s ease-in-out infinite' }} />
         <div className="absolute rounded-full pointer-events-none" style={{ width: 280, height: 280, bottom: -40, left: -40, background: 'radial-gradient(circle, rgba(232,145,58,.18) 0%, transparent 70%)', filter: 'blur(60px)', animation: 'float2 11s ease-in-out infinite' }} />
 
-        {/* Logo */}
-        <div
-          className="relative z-10 flex items-center gap-2"
-          style={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: '1.25rem', color: 'white', letterSpacing: '-.02em' }}
-        >
-          <span className="inline-block w-2 h-2 rounded-full" style={{ background: 'var(--teal-dim)', boxShadow: '0 0 10px rgba(91,184,168,.8)' }} />
-          TaskFlow
+        {/* Logo con link al home */}
+        <div className="relative z-10">
+          <LogoLink dark />
         </div>
 
         {/* Main copy */}
@@ -98,13 +115,9 @@ export default function RegisterPage() {
       {/* ── Panel derecho (formulario) ── */}
       <div className="flex flex-col items-center justify-center px-8 py-12" style={{ background: 'var(--paper)' }}>
 
-        {/* Logo móvil */}
-        <div
-          className="md:hidden flex items-center gap-2 mb-10"
-          style={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: '1.25rem', color: 'var(--ink)', letterSpacing: '-.02em' }}
-        >
-          <span className="inline-block w-2 h-2 rounded-full" style={{ background: 'var(--amber)', boxShadow: '0 0 10px var(--amber)' }} />
-          TaskFlow
+        {/* Logo móvil con link al home */}
+        <div className="md:hidden mb-10">
+          <LogoLink />
         </div>
 
         <div className="w-full" style={{ maxWidth: 380 }}>

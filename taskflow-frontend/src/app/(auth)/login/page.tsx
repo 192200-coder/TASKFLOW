@@ -1,4 +1,3 @@
-// src/app/(auth)/login/page.tsx
 'use client';
 
 import { useForm } from 'react-hook-form';
@@ -15,6 +14,28 @@ const loginSchema = z.object({
 });
 
 type LoginForm = z.infer<typeof loginSchema>;
+
+// Componente reutilizable del logo con link al home
+const LogoLink = ({ dark = false }: { dark?: boolean }) => (
+  <Link
+    href="/"
+    className="flex items-center gap-2 hover:opacity-80 transition-opacity"
+    style={{
+      fontFamily: "'Syne', sans-serif",
+      fontWeight: 800,
+      fontSize: '1.25rem',
+      color: dark ? 'white' : 'var(--ink)',
+      letterSpacing: '-.02em',
+      textDecoration: 'none',
+    }}
+  >
+    <span
+      className="inline-block w-2 h-2 rounded-full"
+      style={{ background: 'var(--amber)', boxShadow: '0 0 10px var(--amber)' }}
+    />
+    TaskFlow
+  </Link>
+);
 
 export default function LoginPage() {
   const { login, loading } = useAuth();
@@ -38,13 +59,9 @@ export default function LoginPage() {
         <div className="absolute rounded-full pointer-events-none" style={{ width: 380, height: 380, top: -80, right: -80, background: 'radial-gradient(circle, rgba(232,145,58,.22) 0%, transparent 70%)', filter: 'blur(60px)', animation: 'float1 9s ease-in-out infinite' }} />
         <div className="absolute rounded-full pointer-events-none" style={{ width: 300, height: 300, bottom: -60, left: -60, background: 'radial-gradient(circle, rgba(42,125,110,.18) 0%, transparent 70%)', filter: 'blur(60px)', animation: 'float2 12s ease-in-out infinite' }} />
 
-        {/* Logo */}
-        <div
-          className="relative z-10 flex items-center gap-2"
-          style={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: '1.25rem', color: 'white', letterSpacing: '-.02em' }}
-        >
-          <span className="inline-block w-2 h-2 rounded-full" style={{ background: 'var(--amber)', boxShadow: '0 0 10px var(--amber)' }} />
-          TaskFlow
+        {/* Logo con link al home */}
+        <div className="relative z-10">
+          <LogoLink dark />
         </div>
 
         {/* Main copy */}
@@ -85,13 +102,9 @@ export default function LoginPage() {
       {/* ── Panel derecho (formulario) ── */}
       <div className="flex flex-col items-center justify-center px-8 py-12" style={{ background: 'var(--paper)' }}>
 
-        {/* Logo móvil */}
-        <div
-          className="md:hidden flex items-center gap-2 mb-10"
-          style={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: '1.25rem', color: 'var(--ink)', letterSpacing: '-.02em' }}
-        >
-          <span className="inline-block w-2 h-2 rounded-full" style={{ background: 'var(--amber)', boxShadow: '0 0 10px var(--amber)' }} />
-          TaskFlow
+        {/* Logo móvil con link al home */}
+        <div className="md:hidden mb-10">
+          <LogoLink />
         </div>
 
         <div className="w-full" style={{ maxWidth: 380 }}>

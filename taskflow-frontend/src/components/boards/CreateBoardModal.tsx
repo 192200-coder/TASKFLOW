@@ -1,11 +1,11 @@
 // src/components/boards/CreateBoardModal.tsx
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { useBoards } from '@/lib/hooks/useBoards';
+import { Board } from '@/lib/types/board';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { X } from 'lucide-react';
@@ -21,27 +21,41 @@ type BoardForm = z.infer<typeof boardSchema>;
 interface CreateBoardModalProps {
   isOpen: boolean;
   onClose: () => void;
+  onCreateBoard: (data: Partial<Board>) => Promise<Board | null>;
 }
 
-export const CreateBoardModal = ({ isOpen, onClose }: CreateBoardModalProps) => {
-  const { createBoard } = useBoards();
+export const CreateBoardModal = ({ isOpen, onClose, onCreateBoard }: CreateBoardModalProps) => {
   const [isLoading, setIsLoading] = useState(false);
-  
+
   const { register, handleSubmit, formState: { errors }, reset } = useForm<BoardForm>({
     resolver: zodResolver(boardSchema),
-    defaultValues: {
-      name: '',
-      description: '',
-      cover_image_url: '',
-    },
+    defaultValues: { name: '', description: '', cover_image_url: '' },
   });
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') handleClose();
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [isOpen]);
+
   if (!isOpen) return null;
+
+  const handleClose = () => {
+    reset();
+    onClose();
+  };
+
+  const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.target === e.currentTarget) handleClose();
+  };
 
   const onSubmit = async (data: BoardForm) => {
     setIsLoading(true);
     try {
-      await createBoard(data);
+      await onCreateBoard(data);
       reset();
       onClose();
     } catch (error) {
@@ -52,14 +66,14 @@ export const CreateBoardModal = ({ isOpen, onClose }: CreateBoardModalProps) => 
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg w-full max-w-md p-6">
+    <div
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+      onClick={handleBackdropClick}
+    >
+      <div className="bg-white rounded-lg w-full max-w-md p-6 shadow-xl">
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-xl font-semibold">Crear nuevo tablero</h2>
-          <button
-            onClick={onClose}
-            className="p-1 hover:bg-gray-100 rounded-full transition-colors"
-          >
+          <button onClick={handleClose} className="p-1 hover:bg-gray-100 rounded-full transition-colors" aria-label="Cerrar">
             <X size={20} />
           </button>
         </div>
@@ -71,46 +85,25 @@ export const CreateBoardModal = ({ isOpen, onClose }: CreateBoardModalProps) => 
             {...register('name')}
             error={errors.name?.message}
           />
-
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Descripción (opcional)
-            </label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Descripción (opcional)</label>
             <textarea
               {...register('description')}
               rows={3}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
               placeholder="Describe el propósito de este tablero..."
             />
-            {errors.description && (
-              <p className="mt-1 text-sm text-red-600">{errors.description.message}</p>
-            )}
+            {errors.description && <p className="mt-1 text-sm text-red-600">{errors.description.message}</p>}
           </div>
-
           <Input
             label="URL de imagen de portada (opcional)"
             placeholder="https://ejemplo.com/imagen.jpg"
             {...register('cover_image_url')}
             error={errors.cover_image_url?.message}
           />
-
           <div className="flex gap-3 pt-4">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={onClose}
-              className="flex-1"
-            >
-              Cancelar
-            </Button>
-            <Button
-              type="submit"
-              variant="primary"
-              isLoading={isLoading}
-              className="flex-1"
-            >
-              Crear
-            </Button>
+            <Button type="button" variant="outline" onClick={handleClose} className="flex-1">Cancelar</Button>
+            <Button type="submit" variant="primary" isLoading={isLoading} className="flex-1">Crear</Button>
           </div>
         </form>
       </div>

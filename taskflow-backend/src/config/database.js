@@ -13,6 +13,9 @@ const sequelize = new Sequelize(
     logging: process.env.NODE_ENV === 'development' ? console.log : false,
     dialectOptions: {
       multipleStatements: true,
+      // ✅ Mantener conexiones vivas — evita que MySQL las cierre por inactividad
+      keepAlive: true,
+      connectTimeout: 20000,
     },
     define: {
       timestamps: true,
@@ -22,28 +25,43 @@ const sequelize = new Sequelize(
     },
     pool: {
       max: 5,
-      min: 0,
+      min: 1,        // ✅ Mantener al menos 1 conexión viva siempre
       acquire: 30000,
       idle: 10000,
+      evict: 10000,  // ✅ Revisar y descartar conexiones muertas cada 10s
     },
   }
 );
 
-// ✅ Hook CORREGIDO - usando promise() como indica el error
-sequelize.afterConnect(async (connection) => {
+// ✅ Configurar sql_mode en cada nueva conexión
+// mysql2 entrega la conexión raw con API de callbacks — NO usar .promise() aquí
+sequelize.addHook('afterConnect', async (connection) => {
   try {
-    // La conexión es de mysql2 (versión callback), necesitamos .promise()
-    const promiseConn = connection.promise();
-    await promiseConn.query("SET SESSION sql_mode = 'NO_ENGINE_SUBSTITUTION'");
-    console.log('✅ sql_mode configurado correctamente');
-    
-    // Verificar (opcional)
-    const [result] = await promiseConn.query("SELECT @@sql_mode as mode");
-    console.log('📊 sql_mode actual:', result[0].mode);
+    await new Promise((resolve, reject) => {
+      connection.query(
+        "SET SESSION sql_mode = 'NO_ENGINE_SUBSTITUTION'",
+        (err) => (err ? reject(err) : resolve())
+      );
+    });
   } catch (error) {
-    console.error('❌ Error configurando sql_mode:', error);
+    // No bloqueamos el servidor si falla
+    console.warn('⚠️  sql_mode no configurado en esta conexión:', error.message);
   }
 });
 
+const initializeDatabase = async () => {
+  try {
+    await sequelize.authenticate();
+    console.log('✅ Conexión a la base de datos establecida correctamente');
+
+    const [result] = await sequelize.query("SELECT @@SESSION.sql_mode as mode");
+    console.log('📊 sql_mode activo:', result[0]?.mode);
+  } catch (error) {
+    console.error('❌ Error al conectar con la base de datos:', error);
+    throw error;
+  }
+};
+
 module.exports = sequelize;
 module.exports.sequelize = sequelize;
+module.exports.initializeDatabase = initializeDatabase;

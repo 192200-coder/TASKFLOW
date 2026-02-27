@@ -7,9 +7,10 @@ import { CreateBoardModal } from '@/components/boards/CreateBoardModal';
 import { Button } from '@/components/ui/Button';
 import { Plus } from 'lucide-react';
 import { useState } from 'react';
+import { Board } from '@/lib/types/board';
 
 export default function DashboardPage() {
-  const { boards, loading } = useBoards();
+  const { boards, loading, createBoard } = useBoards();
   const [isModalOpen, setIsModalOpen] = useState(false);
 
   if (loading) {
@@ -63,9 +64,11 @@ export default function DashboardPage() {
         </div>
       )}
 
-      <CreateBoardModal 
+      {/* ✅ createBoard viene del mismo useBoards que renderiza la lista */}
+      <CreateBoardModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
+        onCreateBoard={createBoard}
       />
     </div>
   );

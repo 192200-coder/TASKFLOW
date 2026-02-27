@@ -65,23 +65,36 @@ export const KanbanBoard = ({
     if (!activeRaw.startsWith('task-')) return;
 
     const taskId = parseInt(activeRaw.replace('task-', ''), 10);
-    let targetColumnId: number | null = null;
+    const currentColumn = findColumnOfTask(taskId);
+    if (!currentColumn) return;
+
+    let targetColumnId: number = currentColumn.id;
     let targetPosition = 0;
 
     if (overRaw.startsWith('column-')) {
+      // Soltado en zona vacía de una columna
       targetColumnId = parseInt(overRaw.replace('column-', ''), 10);
+      const targetCol = columns.find(c => c.id === targetColumnId);
+      targetPosition = targetCol?.tasks?.length ?? 0;
+
     } else if (overRaw.startsWith('task-')) {
-      const overTaskId  = parseInt(overRaw.replace('task-', ''), 10);
-      const overColumn  = findColumnOfTask(overTaskId);
-      if (overColumn) {
-        targetColumnId = overColumn.id;
-        targetPosition = overColumn.tasks?.findIndex(t => t.id === overTaskId) ?? 0;
-      }
+      // Soltado sobre otra tarea
+      const overTaskId = parseInt(overRaw.replace('task-', ''), 10);
+      const overColumn = findColumnOfTask(overTaskId);
+      if (!overColumn) return;
+
+      targetColumnId = overColumn.id;
+      targetPosition = overColumn.tasks?.findIndex(t => t.id === overTaskId) ?? 0;
     }
 
-    if (targetColumnId === null) return;
-    const currentColumn = findColumnOfTask(taskId);
-    if (currentColumn?.id !== targetColumnId) {
+    // ✅ Siempre llamar onTaskMove — tanto para cambio de columna
+    // como para reordenamiento dentro de la misma columna
+    // Solo ignorar si la tarea se suelta exactamente en su posición actual
+    const currentPosition = currentColumn.tasks?.findIndex(t => t.id === taskId) ?? 0;
+    const sameColumnSamePosition =
+      currentColumn.id === targetColumnId && currentPosition === targetPosition;
+
+    if (!sameColumnSamePosition) {
       onTaskMove(taskId, targetColumnId, targetPosition);
     }
   };
