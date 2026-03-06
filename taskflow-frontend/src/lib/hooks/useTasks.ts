@@ -8,30 +8,23 @@ import toast from 'react-hot-toast';
 export const useTasks = (boardColumns: Column[] = []) => {
   const [columns, setColumns] = useState<Column[]>(boardColumns);
   const [loading, setLoading] = useState(false);
-  const columnsStrRef = useRef(JSON.stringify(boardColumns));
 
+  // ── Sincronizar cuando llegan nuevas columnas desde el board ──────────
+  // Comparación por ID+length, no stringify completo — evita re-renders costosos
+  const prevBoardIdRef = useRef<string>('');
   useEffect(() => {
-    const newStr = JSON.stringify(boardColumns);
-    if (columnsStrRef.current !== newStr) {
+    const signature = boardColumns.map(c => c.id).join(',') + ':' + boardColumns.length;
+    if (prevBoardIdRef.current !== signature) {
+      prevBoardIdRef.current = signature;
       setColumns(boardColumns);
-      columnsStrRef.current = newStr;
     }
   }, [boardColumns]);
 
-  // ─── Helpers ─────────────────────────────────────────────────────────────────
-  const updateTaskInColumns = (taskId: number, updater: (t: Task) => Task): Column[] =>
-    columns.map(col => ({
-      ...col,
-      tasks: col.tasks?.map(t => t.id === taskId ? updater(t) : t),
-    }));
+  // ── Helpers ───────────────────────────────────────────────────────────
+  const removeTaskFromColumns = (taskId: number, cols: Column[]): Column[] =>
+    cols.map(col => ({ ...col, tasks: col.tasks?.filter(t => t.id !== taskId) }));
 
-  const removeTaskFromColumns = (taskId: number): Column[] =>
-    columns.map(col => ({
-      ...col,
-      tasks: col.tasks?.filter(t => t.id !== taskId),
-    }));
-
-  // ─── createTask ───────────────────────────────────────────────────────────────
+  // ── createTask ────────────────────────────────────────────────────────
   const createTask = async (data: CreateTaskDTO): Promise<Task | null> => {
     setLoading(true);
     try {
@@ -51,12 +44,15 @@ export const useTasks = (boardColumns: Column[] = []) => {
     }
   };
 
-  // ─── updateTask ───────────────────────────────────────────────────────────────
+  // ── updateTask ────────────────────────────────────────────────────────
   const updateTask = async (taskId: number, data: UpdateTaskDTO): Promise<void> => {
     setLoading(true);
     try {
       const updated: Task = await tasksApi.updateTask(taskId, data);
-      setColumns(updateTaskInColumns(taskId, () => updated));
+      setColumns(prev => prev.map(col => ({
+        ...col,
+        tasks: col.tasks?.map(t => t.id === taskId ? updated : t),
+      })));
       toast.success('Tarea actualizada');
     } catch {
       toast.error('Error al actualizar tarea');
@@ -65,68 +61,48 @@ export const useTasks = (boardColumns: Column[] = []) => {
     }
   };
 
-  // ─── moveTask ─────────────────────────────────────────────────────────────────
+  // ── moveTask ──────────────────────────────────────────────────────────
   const moveTask = async (
     taskId: number,
     newColumnId: number,
-    newPosition: number
+    newPosition: number,
   ): Promise<void> => {
     const previousColumns = columns;
 
-    // Encontrar la tarea y su columna actual
     let movedTask: Task | null = null;
     let sourceColumnId: number | null = null;
-
     for (const col of columns) {
       const found = col.tasks?.find(t => t.id === taskId);
-      if (found) {
-        movedTask = found;
-        sourceColumnId = col.id;
-        break;
-      }
+      if (found) { movedTask = found; sourceColumnId = col.id; break; }
     }
     if (!movedTask || sourceColumnId === null) return;
 
     const optimisticTask: Task = { ...movedTask, column_id: newColumnId, position: newPosition };
 
-    // ✅ Optimistic update — funciona para mismo columna y entre columnas
-    setColumns(prev => {
-      return prev.map(col => {
-        if (col.id === sourceColumnId && col.id !== newColumnId) {
-          // Quitar de columna origen (solo si cambia de columna)
-          return { ...col, tasks: col.tasks?.filter(t => t.id !== taskId) };
-        }
-
-        if (col.id === newColumnId) {
-          // Construir nueva lista para la columna destino
-          let tasks = (col.tasks ?? []).filter(t => t.id !== taskId); // quitar si ya estaba
-          tasks = [
-            ...tasks.slice(0, newPosition),
-            optimisticTask,
-            ...tasks.slice(newPosition),
-          ];
-          // Recalcular posiciones para que sean consistentes
-          tasks = tasks.map((t, i) => ({ ...t, position: i }));
-          return { ...col, tasks };
-        }
-
-        return col;
-      });
-    });
+    setColumns(prev => prev.map(col => {
+      if (col.id === sourceColumnId && col.id !== newColumnId) {
+        return { ...col, tasks: col.tasks?.filter(t => t.id !== taskId) };
+      }
+      if (col.id === newColumnId) {
+        let tasks = (col.tasks ?? []).filter(t => t.id !== taskId);
+        tasks = [...tasks.slice(0, newPosition), optimisticTask, ...tasks.slice(newPosition)];
+        return { ...col, tasks: tasks.map((t, i) => ({ ...t, position: i })) };
+      }
+      return col;
+    }));
 
     try {
       await tasksApi.moveTask(taskId, newColumnId, newPosition);
     } catch {
-      // Revertir si falla
       setColumns(previousColumns);
       toast.error('Error al mover tarea');
     }
   };
 
-  // ─── deleteTask ───────────────────────────────────────────────────────────────
+  // ── deleteTask ────────────────────────────────────────────────────────
   const deleteTask = async (taskId: number): Promise<void> => {
     const previousColumns = columns;
-    setColumns(removeTaskFromColumns(taskId));
+    setColumns(prev => removeTaskFromColumns(taskId, prev));
     try {
       await tasksApi.deleteTask(taskId);
       toast.success('Tarea eliminada');
@@ -137,17 +113,9 @@ export const useTasks = (boardColumns: Column[] = []) => {
   };
 
   const setColumnsFromBoard = useCallback((newColumns: Column[]) => {
+    prevBoardIdRef.current = newColumns.map(c => c.id).join(',') + ':' + newColumns.length;
     setColumns(newColumns);
-    columnsStrRef.current = JSON.stringify(newColumns);
   }, []);
 
-  return {
-    columns,
-    loading,
-    setColumnsFromBoard,
-    createTask,
-    updateTask,
-    moveTask,
-    deleteTask,
-  };
+  return { columns, loading, setColumnsFromBoard, createTask, updateTask, moveTask, deleteTask };
 };

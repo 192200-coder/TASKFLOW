@@ -1,7 +1,33 @@
 // src/controllers/taskController.js
-const { Task, TaskComment, TaskHistory, User, Column } = require('../models');
+const { Task, TaskComment, TaskHistory, User, Column, BoardMember } = require('../models');
 const { validationResult } = require('express-validator');
 const sequelize = require('../config/database');
+
+// ─── Helper: verificar rol del usuario en el tablero de una columna ───────────
+// Devuelve el rol si tiene acceso, lanza error HTTP si no.
+const ROLE_HIERARCHY = { viewer: 0, member: 1, admin: 2 };
+
+const checkBoardRole = async (res, columnId, userId, minRole) => {
+  const col = await Column.findByPk(columnId, { attributes: ['board_id'] });
+  if (!col) {
+    res.status(404).json({ error: 'Columna no encontrada' });
+    return null;
+  }
+  const membership = await BoardMember.findOne({
+    where: { board_id: col.board_id, user_id: userId },
+  });
+  if (!membership) {
+    res.status(403).json({ error: 'No eres miembro de este tablero' });
+    return null;
+  }
+  if ((ROLE_HIERARCHY[membership.role] ?? -1) < (ROLE_HIERARCHY[minRole] ?? 99)) {
+    res.status(403).json({
+      error: `Acción no permitida. Se requiere rol "${minRole}", tu rol es "${membership.role}"`,
+    });
+    return null;
+  }
+  return membership.role;
+};
 
 // ─── Crear tarea ──────────────────────────────────────────────────────────────
 const createTask = async (req, res) => {
@@ -13,12 +39,16 @@ const createTask = async (req, res) => {
       return res.status(400).json({ errors: errors.array() });
     }
 
+    const { title, description, column_id, position, priority, due_date, assigned_to } = req.body;
+
+    // ── Verificar que el usuario tiene al menos rol "member" en el tablero ──
+    const role = await checkBoardRole(res, column_id, req.user.id, 'member');
+    if (!role) { await transaction.rollback(); return; }
+
     await sequelize.query(
       "SET SESSION sql_mode = 'NO_ENGINE_SUBSTITUTION'",
       { transaction }
     );
-
-    const { title, description, column_id, position, priority, due_date, assigned_to } = req.body;
 
     const [taskId] = await sequelize.query(
       `INSERT INTO tasks 
@@ -28,25 +58,25 @@ const createTask = async (req, res) => {
       {
         replacements: {
           title,
-          description: description || null,
-          priority: priority || 'Media',
-          due_date: due_date || null,
-          position: position || 0,
+          description:  description  || null,
+          priority:     priority     || 'Media',
+          due_date:     due_date     || null,
+          position:     position     || 0,
           column_id,
-          assigned_to: assigned_to || null,
-          created_by: req.user.id,
-          updated_by: req.user.id,
+          assigned_to:  assigned_to  || null,
+          created_by:   req.user.id,
+          updated_by:   req.user.id,
         },
         transaction,
       }
     );
 
     await TaskHistory.create({
-      task_id: taskId,
-      user_id: req.user.id,
-      action: 'CREATE',
+      task_id:       taskId,
+      user_id:       req.user.id,
+      action:        'CREATE',
       field_changed: 'task',
-      new_value: `Tarea "${title}" creada`,
+      new_value:     `Tarea "${title}" creada`,
     }, { transaction });
 
     await transaction.commit();
@@ -72,9 +102,9 @@ const getTaskDetails = async (req, res) => {
     const { taskId } = req.params;
     const task = await Task.findByPk(taskId, {
       include: [
-        { model: User, as: 'assignee', attributes: ['id', 'name', 'avatar_url'] },
-        { model: User, as: 'creator',  attributes: ['id', 'name'] },
-        { model: User, as: 'updater',  attributes: ['id', 'name'] },
+        { model: User,        as: 'assignee', attributes: ['id', 'name', 'avatar_url'] },
+        { model: User,        as: 'creator',  attributes: ['id', 'name'] },
+        { model: User,        as: 'updater',  attributes: ['id', 'name'] },
         {
           model: TaskComment,
           as: 'comments',
@@ -84,6 +114,11 @@ const getTaskDetails = async (req, res) => {
       ],
     });
     if (!task) return res.status(404).json({ error: 'Tarea no encontrada' });
+
+    // Verificar que el usuario es al menos viewer del tablero
+    const role = await checkBoardRole(res, task.column_id, req.user.id, 'viewer');
+    if (!role) return;
+
     res.json(task);
   } catch (error) {
     console.error('Error al obtener tarea:', error);
@@ -104,6 +139,10 @@ const updateTask = async (req, res) => {
       return res.status(404).json({ error: 'Tarea no encontrada' });
     }
 
+    // ── Verificar rol member ──
+    const role = await checkBoardRole(res, task.column_id, req.user.id, 'member');
+    if (!role) { await transaction.rollback(); return; }
+
     const oldValues = {
       title:       task.title,
       description: task.description,
@@ -122,7 +161,6 @@ const updateTask = async (req, res) => {
       updated_at:  new Date(),
     }, { transaction });
 
-    // Historial de cambios
     const fields = ['title', 'description', 'priority', 'due_date', 'assigned_to'];
     for (const field of fields) {
       const newVal = req.body[field];
@@ -165,6 +203,11 @@ const deleteTask = async (req, res) => {
       await transaction.rollback();
       return res.status(404).json({ error: 'Tarea no encontrada' });
     }
+
+    // ── Solo member o superior puede eliminar ──
+    const role = await checkBoardRole(res, task.column_id, req.user.id, 'member');
+    if (!role) { await transaction.rollback(); return; }
+
     await task.destroy({ transaction });
     await transaction.commit();
     res.json({ message: 'Tarea eliminada exitosamente' });
@@ -193,25 +236,22 @@ const moveTask = async (req, res) => {
       return res.status(404).json({ error: 'Tarea no encontrada' });
     }
 
+    // ── Verificar en la columna ORIGEN ──
+    const role = await checkBoardRole(res, task.column_id, req.user.id, 'member');
+    if (!role) { await transaction.rollback(); return; }
+
     const oldColumnId = task.column_id;
 
-    // ✅ Query directa — evita el bug de timestamps: false con .update()
     await sequelize.query(
       `UPDATE tasks 
        SET column_id = :column_id, position = :position, updated_by = :updated_by, updated_at = NOW()
        WHERE id = :taskId`,
       {
-        replacements: {
-          column_id,
-          position,
-          updated_by: req.user.id,
-          taskId,
-        },
+        replacements: { column_id, position, updated_by: req.user.id, taskId },
         transaction,
       }
     );
 
-    // Registrar en historial solo si cambió de columna
     if (String(oldColumnId) !== String(column_id)) {
       await TaskHistory.create({
         task_id:       task.id,
@@ -225,7 +265,6 @@ const moveTask = async (req, res) => {
 
     await transaction.commit();
 
-    // Devolver la tarea actualizada
     const updatedTask = await Task.findByPk(taskId, {
       include: [
         { model: User, as: 'assignee', attributes: ['id', 'name', 'avatar_url'] },
@@ -250,6 +289,10 @@ const addComment = async (req, res) => {
     const task = await Task.findByPk(taskId);
     if (!task) return res.status(404).json({ error: 'Tarea no encontrada' });
 
+    // ── Al menos member para comentar ──
+    const role = await checkBoardRole(res, task.column_id, req.user.id, 'member');
+    if (!role) return;
+
     const comment = await TaskComment.create({
       content,
       task_id: taskId,
@@ -271,6 +314,12 @@ const addComment = async (req, res) => {
 const getComments = async (req, res) => {
   try {
     const { taskId } = req.params;
+    const task = await Task.findByPk(taskId, { attributes: ['column_id'] });
+    if (!task) return res.status(404).json({ error: 'Tarea no encontrada' });
+
+    const role = await checkBoardRole(res, task.column_id, req.user.id, 'viewer');
+    if (!role) return;
+
     const comments = await TaskComment.findAll({
       where: { task_id: taskId },
       include: [{ model: User, as: 'user', attributes: ['id', 'name', 'avatar_url'] }],
@@ -287,10 +336,19 @@ const getComments = async (req, res) => {
 const deleteComment = async (req, res) => {
   try {
     const { taskId, commentId } = req.params;
+
+    const task = await Task.findByPk(taskId, { attributes: ['column_id'] });
+    if (!task) return res.status(404).json({ error: 'Tarea no encontrada' });
+
+    // Verificar membresía (viewer basta para encontrar, pero solo el autor puede borrar)
+    const role = await checkBoardRole(res, task.column_id, req.user.id, 'viewer');
+    if (!role) return;
+
     const comment = await TaskComment.findOne({
       where: { id: commentId, task_id: taskId, user_id: req.user.id },
     });
     if (!comment) return res.status(404).json({ error: 'Comentario no encontrado o sin permisos' });
+
     await comment.destroy();
     res.json({ message: 'Comentario eliminado exitosamente' });
   } catch (error) {
@@ -303,6 +361,13 @@ const deleteComment = async (req, res) => {
 const getTaskHistory = async (req, res) => {
   try {
     const { taskId } = req.params;
+
+    const task = await Task.findByPk(taskId, { attributes: ['column_id'] });
+    if (!task) return res.status(404).json({ error: 'Tarea no encontrada' });
+
+    const role = await checkBoardRole(res, task.column_id, req.user.id, 'viewer');
+    if (!role) return;
+
     const history = await TaskHistory.findAll({
       where: { task_id: taskId },
       include: [{ model: User, as: 'user', attributes: ['id', 'name', 'avatar_url'] }],

@@ -15,6 +15,12 @@ const {
   getTaskHistory,
 } = require('../controllers/taskController');
 
+// NOTA sobre permisos en tareas:
+// Las rutas de tareas no reciben boardId directamente — reciben column_id o taskId.
+// La verificación de rol se hace DENTRO de cada controller consultando la columna
+// para obtener el board_id y luego verificando board_members.
+// Ver taskController_boardcheck.js para los helpers a añadir.
+
 router.use(authenticate);
 
 router.post('/',
@@ -25,8 +31,8 @@ router.post('/',
   createTask
 );
 
-router.get('/:taskId',          getTaskDetails);
-router.get('/:taskId/history',  getTaskHistory);
+router.get('/:taskId',         getTaskDetails);
+router.get('/:taskId/history', getTaskHistory);
 
 router.put('/:taskId',
   [
@@ -36,17 +42,14 @@ router.put('/:taskId',
   updateTask
 );
 
-router.delete('/:taskId',       deleteTask);
-router.patch('/:taskId/move',   moveTask);
+router.delete('/:taskId',     deleteTask);
+router.patch('/:taskId/move', moveTask);
 
-// ── Comentarios ───────────────────────────────────────────────────────────────
-router.get('/:taskId/comments', getComments);
-
+router.get('/:taskId/comments',  getComments);
 router.post('/:taskId/comments',
   [body('content').notEmpty().withMessage('El comentario no puede estar vacío')],
   addComment
 );
-
 router.delete('/:taskId/comments/:commentId', deleteComment);
 
 module.exports = router;

@@ -48,6 +48,7 @@ export interface TaskHistory {
   task_id: number;
   user_id: number;
   action: string;
+  field_changed?: string | null;   // ← añadido
   old_value?: string | null;
   new_value?: string | null;
   created_at: string;

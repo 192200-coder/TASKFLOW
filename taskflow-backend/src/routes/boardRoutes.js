@@ -3,36 +3,48 @@ const express = require('express');
 const router = express.Router();
 const { body } = require('express-validator');
 const { authenticate } = require('../middleware/auth');
+const { requireBoardRole } = require('../middleware/boardAuth');
 const {
   createBoard,
   getMyBoards,
   getBoardById,
   updateBoard,
   deleteBoard,
-  inviteMember
+  inviteMember,
+  updateMemberRole,
 } = require('../controllers/boardController');
 
-router.use(authenticate); // Todas las rutas requieren autenticación
+router.use(authenticate);
 
+// Crear tablero — cualquier usuario autenticado
 router.post('/',
-  [
-    body('name').notEmpty().withMessage('El nombre del tablero es requerido')
-  ],
+  [body('name').notEmpty().withMessage('El nombre del tablero es requerido')],
   createBoard
 );
 
+// Mis tableros / tablero por ID — cualquier miembro
 router.get('/my-boards', getMyBoards);
+router.get('/:boardId',  requireBoardRole('viewer'), getBoardById);
 
-router.get('/:boardId', getBoardById);
-router.put('/:boardId', updateBoard);
-router.delete('/:boardId', deleteBoard);
+// Editar / eliminar — solo admin
+router.put('/:boardId',    requireBoardRole('admin'), updateBoard);
+router.delete('/:boardId', requireBoardRole('admin'), deleteBoard);
 
+// Invitar miembro — solo admin
 router.post('/:boardId/invite',
+  requireBoardRole('admin'),
   [
     body('email').isEmail().withMessage('Email inválido'),
-    body('role').optional().isIn(['admin', 'member', 'viewer'])
+    body('role').optional().isIn(['admin', 'member', 'viewer']),
   ],
   inviteMember
+);
+
+// Cambiar rol de miembro — solo admin
+router.patch('/:boardId/members/:userId',
+  requireBoardRole('admin'),
+  [body('role').isIn(['admin', 'member', 'viewer']).withMessage('Rol inválido')],
+  updateMemberRole
 );
 
 module.exports = router;

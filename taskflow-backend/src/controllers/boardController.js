@@ -219,4 +219,42 @@ const inviteMember = async (req, res) => {
   }
 };
 
-module.exports = { createBoard, getMyBoards, getBoardById, updateBoard, deleteBoard, inviteMember };
+const updateMemberRole = async (req, res) => {
+  try {
+    const { boardId, userId } = req.params;
+    const { role } = req.body;
+
+    if (!['admin', 'member', 'viewer'].includes(role)) {
+      return res.status(400).json({ error: 'Rol inválido' });
+    }
+
+    // Solo un admin del tablero puede cambiar roles
+    const requesterMembership = await BoardMember.findOne({
+      where: { board_id: boardId, user_id: req.user.id, role: 'admin' },
+    });
+    if (!requesterMembership) {
+      return res.status(403).json({ error: 'Solo los administradores pueden cambiar roles' });
+    }
+
+    // No se puede cambiar el rol del dueño
+    const board = await Board.findByPk(boardId);
+    if (board.owner_id === parseInt(userId)) {
+      return res.status(400).json({ error: 'No se puede cambiar el rol del dueño del tablero' });
+    }
+
+    const membership = await BoardMember.findOne({
+      where: { board_id: boardId, user_id: userId },
+    });
+    if (!membership) {
+      return res.status(404).json({ error: 'El usuario no es miembro de este tablero' });
+    }
+
+    await membership.update({ role });
+    res.json({ message: 'Rol actualizado exitosamente', role });
+  } catch (error) {
+    console.error('Error al actualizar rol:', error);
+    res.status(500).json({ error: 'Error al actualizar el rol' });
+  }
+};
+
+module.exports = { createBoard, getMyBoards, getBoardById, updateBoard, deleteBoard, inviteMember, updateMemberRole };

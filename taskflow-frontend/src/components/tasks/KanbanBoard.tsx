@@ -17,7 +17,7 @@ import { useState } from 'react';
 interface KanbanBoardProps {
   columns: ColumnType[];
   boardMembers?: User[];
-  onTaskMove: (taskId: number, newColumnId: number, newPosition: number) => void;
+  onTaskMove:   (taskId: number, newColumnId: number, newPosition: number) => void;
   onTaskCreate: (data: CreateTaskDTO) => Promise<Task | null>;
   onTaskUpdate: (taskId: number, data: UpdateTaskDTO) => Promise<void>;
   onTaskDelete: (taskId: number) => Promise<void>;
@@ -61,42 +61,31 @@ export const KanbanBoard = ({
     if (!over) return;
 
     const activeRaw = active.id as string;
-    const overRaw   = over.id as string;
+    const overRaw   = over.id   as string;
     if (!activeRaw.startsWith('task-')) return;
 
-    const taskId = parseInt(activeRaw.replace('task-', ''), 10);
+    const taskId        = parseInt(activeRaw.replace('task-', ''), 10);
     const currentColumn = findColumnOfTask(taskId);
     if (!currentColumn) return;
 
     let targetColumnId: number = currentColumn.id;
-    let targetPosition = 0;
+    let targetPosition         = 0;
 
     if (overRaw.startsWith('column-')) {
-      // Soltado en zona vacía de una columna
       targetColumnId = parseInt(overRaw.replace('column-', ''), 10);
       const targetCol = columns.find(c => c.id === targetColumnId);
-      targetPosition = targetCol?.tasks?.length ?? 0;
-
+      targetPosition  = targetCol?.tasks?.length ?? 0;
     } else if (overRaw.startsWith('task-')) {
-      // Soltado sobre otra tarea
       const overTaskId = parseInt(overRaw.replace('task-', ''), 10);
       const overColumn = findColumnOfTask(overTaskId);
       if (!overColumn) return;
-
       targetColumnId = overColumn.id;
       targetPosition = overColumn.tasks?.findIndex(t => t.id === overTaskId) ?? 0;
     }
 
-    // ✅ Siempre llamar onTaskMove — tanto para cambio de columna
-    // como para reordenamiento dentro de la misma columna
-    // Solo ignorar si la tarea se suelta exactamente en su posición actual
-    const currentPosition = currentColumn.tasks?.findIndex(t => t.id === taskId) ?? 0;
-    const sameColumnSamePosition =
-      currentColumn.id === targetColumnId && currentPosition === targetPosition;
-
-    if (!sameColumnSamePosition) {
-      onTaskMove(taskId, targetColumnId, targetPosition);
-    }
+    const currentPosition    = currentColumn.tasks?.findIndex(t => t.id === taskId) ?? 0;
+    const sameColumnSamePos  = currentColumn.id === targetColumnId && currentPosition === targetPosition;
+    if (!sameColumnSamePos) onTaskMove(taskId, targetColumnId, targetPosition);
   };
 
   return (
@@ -126,8 +115,20 @@ export const KanbanBoard = ({
         </div>
       </SortableContext>
 
-      <DragOverlay>
-        {activeTask && <TaskCard task={activeTask} />}
+      {/* ── Overlay de drag: sombra pronunciada (feedback UX-01) ── */}
+      <DragOverlay dropAnimation={{
+        duration: 200,
+        easing: 'cubic-bezier(.18,.67,.6,1.22)',
+      }}>
+        {activeTask && (
+          <div style={{ transform: 'rotate(2deg)', filter: 'drop-shadow(0 20px 40px rgba(13,15,20,.25))' }}>
+            <TaskCard
+              task={activeTask}
+              boardMembers={boardMembers}
+              isDragOverlay
+            />
+          </div>
+        )}
       </DragOverlay>
     </DndContext>
   );

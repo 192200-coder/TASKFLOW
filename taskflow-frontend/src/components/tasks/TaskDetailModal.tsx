@@ -1,397 +1,661 @@
 // src/components/tasks/TaskDetailModal.tsx
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
-import { tasksApi } from '@/lib/api/tasks';
-import { Task, UpdateTaskDTO, TaskComment, TaskHistory, Priority } from '@/lib/types/task';
+import { useState, useEffect, useRef } from 'react';
+import { Task, UpdateTaskDTO, Priority, TaskComment, TaskHistory } from '@/lib/types/task';
 import { User } from '@/lib/types/user';
-import {
-  X, Calendar, Flag, User as UserIcon, MessageSquare,
-  Clock, Trash2, Send, Loader2, Edit2, Check,
-} from 'lucide-react';
-import { format } from 'date-fns';
-import { es } from 'date-fns/locale';
+import { tasksApi } from '@/lib/api/tasks';
 import { useAuth } from '@/contexts/AuthContext';
+import {
+  X, Calendar, Flag, User as UserIcon, AlignLeft,
+  MessageSquare, Clock, Trash2, Loader2, Send, ChevronDown,
+  CheckCircle2, AlertCircle, Minus,
+} from 'lucide-react';
+import { format, isAfter, parseISO } from 'date-fns';
+import { es } from 'date-fns/locale';
 import toast from 'react-hot-toast';
 
 interface TaskDetailModalProps {
   task: Task;
   boardMembers?: User[];
+  columnName?: string;
   onClose: () => void;
   onUpdate: (taskId: number, data: UpdateTaskDTO) => Promise<void>;
   onDelete: (taskId: number) => Promise<void>;
 }
 
-const PRIORITIES: Priority[] = ['Alta', 'Media', 'Baja'];
-
-const priorityColor: Record<Priority, string> = {
-  Alta:  'bg-red-100 text-red-700 border-red-200',
-  Media: 'bg-yellow-100 text-yellow-700 border-yellow-200',
-  Baja:  'bg-green-100 text-green-700 border-green-200',
-};
+const PRIORITY_OPTIONS: { value: Priority; label: string; icon: React.ReactNode; color: string; bg: string }[] = [
+  { value: 'Alta',  label: 'Alta',  icon: <AlertCircle size={13} />, color: '#c0392b', bg: 'rgba(192,57,43,.1)' },
+  { value: 'Media', label: 'Media', icon: <Minus       size={13} />, color: '#b7770d', bg: 'rgba(232,145,58,.1)' },
+  { value: 'Baja',  label: 'Baja',  icon: <CheckCircle2 size={13}/>, color: '#1e7e34', bg: 'rgba(39,174,96,.1)' },
+];
 
 export const TaskDetailModal = ({
   task,
   boardMembers = [],
+  columnName,
   onClose,
   onUpdate,
   onDelete,
 }: TaskDetailModalProps) => {
   const { user } = useAuth();
 
-  // ── Estado del formulario ─────────────────────────────────────────────
-  const [title, setTitle]             = useState(task.title);
+  // ── Campos editables ──────────────────────────────────────────────────
+  const [title,       setTitle]       = useState(task.title);
   const [description, setDescription] = useState(task.description ?? '');
-  const [priority, setPriority]       = useState<Priority>(task.priority);
-  const [dueDate, setDueDate]         = useState(
-    task.due_date ? task.due_date.slice(0, 10) : ''
-  );
-  const [assignedTo, setAssignedTo]   = useState<number | null>(task.assigned_to ?? null);
-  const [editingTitle, setEditingTitle] = useState(false);
-  const [savingField, setSavingField] = useState<string | null>(null);
+  const [priority,    setPriority]    = useState<Priority>(task.priority);
+  const [dueDate,     setDueDate]     = useState(task.due_date ?? '');
+  const [assignedTo,  setAssignedTo]  = useState<number | null>(task.assigned_to ?? null);
 
-  // ── Comentarios ───────────────────────────────────────────────────────
-  const [comments, setComments]       = useState<TaskComment[]>([]);
-  const [newComment, setNewComment]   = useState('');
+  // ── UI state ──────────────────────────────────────────────────────────
+  const [saving,          setSaving]          = useState(false);
+  const [deleting,        setDeleting]        = useState(false);
+  const [activeTab,       setActiveTab]       = useState<'comments' | 'history'>('comments');
+  const [comments,        setComments]        = useState<TaskComment[]>([]);
+  const [history,         setHistory]         = useState<TaskHistory[]>([]);
   const [loadingComments, setLoadingComments] = useState(true);
-  const [sendingComment, setSendingComment]   = useState(false);
+  const [newComment,      setNewComment]      = useState('');
+  const [sendingComment,  setSendingComment]  = useState(false);
+  const [showPriorityDD,  setShowPriorityDD]  = useState(false);
+  const [showAssigneeDD,  setShowAssigneeDD]  = useState(false);
+  const [confirmDelete,   setConfirmDelete]   = useState(false);
 
-  // ── Historial ─────────────────────────────────────────────────────────
-  const [history, setHistory]         = useState<TaskHistory[]>([]);
-  const [loadingHistory, setLoadingHistory]   = useState(true);
-  const [activeTab, setActiveTab]     = useState<'comments' | 'history'>('comments');
+  const titleRef      = useRef<HTMLTextAreaElement>(null);
+  const priorityRef   = useRef<HTMLDivElement>(null);
+  const assigneeRef   = useRef<HTMLDivElement>(null);
+  const commentsEndRef = useRef<HTMLDivElement>(null);
 
-  const titleInputRef = useRef<HTMLInputElement>(null);
+  const isDirty =
+    title !== task.title ||
+    description !== (task.description ?? '') ||
+    priority    !== task.priority ||
+    dueDate     !== (task.due_date ?? '') ||
+    assignedTo  !== (task.assigned_to ?? null);
 
-  // Cerrar con Escape
+  const isOverdue = dueDate && isAfter(new Date(), parseISO(dueDate));
+
+  // ── Cargar comentarios e historial ────────────────────────────────────
   useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', handleKey);
-    return () => window.removeEventListener('keydown', handleKey);
-  }, [onClose]);
-
-  // Cargar comentarios e historial
-  useEffect(() => {
-    tasksApi.getComments(task.id)
-      .then(setComments)
-      .catch(() => toast.error('Error al cargar comentarios'))
-      .finally(() => setLoadingComments(false));
-
-    tasksApi.getTaskHistory(task.id)
-      .then(setHistory)
-      .catch(() => toast.error('Error al cargar historial'))
-      .finally(() => setLoadingHistory(false));
+    const load = async () => {
+      try {
+        const [cmts, hist] = await Promise.all([
+          tasksApi.getComments(task.id),
+          tasksApi.getTaskHistory(task.id),
+        ]);
+        setComments(cmts);
+        setHistory(hist);
+      } catch { /* silencioso */ }
+      finally { setLoadingComments(false); }
+    };
+    load();
   }, [task.id]);
 
-  // ── Guardar campo individual ──────────────────────────────────────────
-  const saveField = async (field: string, data: UpdateTaskDTO) => {
-    setSavingField(field);
-    await onUpdate(task.id, data);
-    setSavingField(null);
-  };
-
-  const handleTitleSave = async () => {
-    if (title.trim() && title !== task.title) {
-      await saveField('title', { title: title.trim() });
+  // Auto-scroll al último comentario
+  useEffect(() => {
+    if (activeTab === 'comments') {
+      commentsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
-    setEditingTitle(false);
+  }, [comments, activeTab]);
+
+  // Cerrar dropdowns al hacer clic fuera
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (priorityRef.current && !priorityRef.current.contains(e.target as Node))
+        setShowPriorityDD(false);
+      if (assigneeRef.current && !assigneeRef.current.contains(e.target as Node))
+        setShowAssigneeDD(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  // Escape para cerrar
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [onClose]);
+
+  // Auto-resize textarea título
+  useEffect(() => {
+    if (titleRef.current) {
+      titleRef.current.style.height = 'auto';
+      titleRef.current.style.height = titleRef.current.scrollHeight + 'px';
+    }
+  }, [title]);
+
+  // ── Guardar cambios ────────────────────────────────────────────────────
+  const handleSave = async () => {
+    if (!title.trim()) { toast.error('El título no puede estar vacío'); return; }
+    setSaving(true);
+    await onUpdate(task.id, {
+      title:       title.trim(),
+      description: description || undefined,
+      priority,
+      due_date:    dueDate || null,
+      assigned_to: assignedTo,
+    });
+    setSaving(false);
   };
 
-  // ── Comentarios ───────────────────────────────────────────────────────
+  // ── Eliminar tarea ──────────────────────────────────────────────────
+  const handleDelete = async () => {
+    setDeleting(true);
+    await onDelete(task.id);
+    onClose();
+  };
+
+  // ── Enviar comentario ─────────────────────────────────────────────────
   const handleSendComment = async () => {
-    const content = newComment.trim();
-    if (!content) return;
+    if (!newComment.trim()) return;
     setSendingComment(true);
     try {
-      const created = await tasksApi.createComment(task.id, content);
+      const created = await tasksApi.createComment(task.id, newComment.trim());
       setComments(prev => [...prev, created]);
       setNewComment('');
-    } catch {
-      toast.error('Error al enviar comentario');
-    } finally {
-      setSendingComment(false);
-    }
+    } catch { toast.error('Error al enviar comentario'); }
+    finally { setSendingComment(false); }
   };
 
   const handleDeleteComment = async (commentId: number) => {
     try {
       await tasksApi.deleteComment(task.id, commentId);
       setComments(prev => prev.filter(c => c.id !== commentId));
-    } catch {
-      toast.error('Error al eliminar comentario');
+    } catch { toast.error('Error al eliminar comentario'); }
+  };
+
+  // ── Helpers visuales ──────────────────────────────────────────────────
+  const getPriorityConfig = (p: Priority) =>
+    PRIORITY_OPTIONS.find(o => o.value === p) ?? PRIORITY_OPTIONS[1];
+
+  const getAssignee = () =>
+    assignedTo ? boardMembers.find(m => m.id === assignedTo) : null;
+
+  const priorityConfig = getPriorityConfig(priority);
+  const assignee       = getAssignee();
+
+  const formatHistoryAction = (h: TaskHistory & { field_changed?: string | null }) => {
+    const who = h.user?.name ?? 'Alguien';
+    switch (h.action) {
+      case 'CREATE': return `${who} creó esta tarea`;
+      case 'MOVE':   return `${who} movió la tarea`;
+      case 'UPDATE':
+        if (h.field_changed === 'title')       return `${who} cambió el título`;
+        if (h.field_changed === 'priority')    return `${who} cambió la prioridad de "${h.old_value}" a "${h.new_value}"`;
+        if (h.field_changed === 'description') return `${who} actualizó la descripción`;
+        if (h.field_changed === 'due_date')    return `${who} cambió la fecha límite`;
+        if (h.field_changed === 'assigned_to') return `${who} cambió el responsable`;
+        return `${who} actualizó ${h.field_changed}`;
+      case 'ASSIGN': return `${who} cambió el responsable`;
+      default:       return `${who} realizó una acción`;
     }
   };
 
-  // ── Eliminar tarea ────────────────────────────────────────────────────
-  const handleDelete = async () => {
-    if (!confirm('¿Eliminar esta tarea?')) return;
-    await onDelete(task.id);
-    onClose();
-  };
-
   return (
-    /* Backdrop */
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: 'rgba(13,15,20,.6)', backdropFilter: 'blur(4px)' }}
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
-
-        {/* ── Header ───────────────────────────────────────────────────── */}
-        <div className="flex items-start justify-between p-6 border-b">
-          <div className="flex-1 mr-4">
-            {editingTitle ? (
-              <div className="flex items-center gap-2">
-                <input
-                  ref={titleInputRef}
-                  autoFocus
-                  value={title}
-                  onChange={e => setTitle(e.target.value)}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter') handleTitleSave();
-                    if (e.key === 'Escape') { setTitle(task.title); setEditingTitle(false); }
-                  }}
-                  className="flex-1 text-xl font-semibold border-b-2 border-blue-500 outline-none py-1"
-                />
-                <button onClick={handleTitleSave} className="text-green-600 hover:text-green-700">
-                  {savingField === 'title'
-                    ? <Loader2 size={18} className="animate-spin" />
-                    : <Check size={18} />}
-                </button>
-              </div>
-            ) : (
-              <h2
-                className="text-xl font-semibold text-gray-800 cursor-pointer hover:text-blue-600 flex items-center gap-2 group"
-                onClick={() => setEditingTitle(true)}
-              >
-                {title}
-                <Edit2 size={14} className="opacity-0 group-hover:opacity-50 transition-opacity" />
-              </h2>
+      <div
+        className="relative w-full flex flex-col overflow-hidden"
+        style={{
+          maxWidth: 780,
+          maxHeight: '90vh',
+          background: 'var(--surface)',
+          borderRadius: 20,
+          boxShadow: '0 32px 80px rgba(13,15,20,.25), 0 4px 16px rgba(13,15,20,.1)',
+          border: '1px solid rgba(13,15,20,.07)',
+          animation: 'modalIn .2s cubic-bezier(.34,1.56,.64,1)',
+        }}
+      >
+        {/* ── Header ────────────────────────────────────────────────────── */}
+        <div
+          className="flex items-start gap-3 px-7 pt-6 pb-4 border-b"
+          style={{ borderColor: 'rgba(13,15,20,.07)', flexShrink: 0 }}
+        >
+          {/* Título editable */}
+          <div className="flex-1 min-w-0">
+            {columnName && (
+              <p className="text-xs font-semibold uppercase tracking-widest mb-2" style={{ color: 'var(--ink-muted)' }}>
+                En · {columnName}
+              </p>
             )}
+            <textarea
+              ref={titleRef}
+              value={title}
+              onChange={e => setTitle(e.target.value)}
+              rows={1}
+              className="w-full resize-none bg-transparent font-extrabold leading-tight outline-none"
+              style={{
+                fontFamily: "'Syne', sans-serif",
+                fontSize: '1.3rem',
+                letterSpacing: '-.02em',
+                color: 'var(--ink)',
+                overflow: 'hidden',
+              }}
+              placeholder="Título de la tarea..."
+            />
           </div>
-          <div className="flex items-center gap-2">
-            <button onClick={handleDelete} className="text-red-400 hover:text-red-600 p-1 transition-colors">
-              <Trash2 size={18} />
-            </button>
-            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1 transition-colors">
-              <X size={20} />
-            </button>
-          </div>
+
+          <button
+            onClick={onClose}
+            className="rounded-full p-1.5 transition-colors mt-0.5"
+            style={{ color: 'var(--ink-muted)' }}
+            onMouseOver={e => (e.currentTarget.style.background = 'rgba(13,15,20,.06)')}
+            onMouseOut={e => (e.currentTarget.style.background = 'transparent')}
+          >
+            <X size={18} />
+          </button>
         </div>
 
-        {/* ── Cuerpo scrollable ─────────────────────────────────────────── */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+        {/* ── Body (scroll) ──────────────────────────────────────────────── */}
+        <div className="flex flex-1 overflow-hidden">
 
-          {/* ── Campos: Prioridad / Fecha / Asignado ─────────────────── */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {/* ── Columna izquierda: contenido principal ─────────────────── */}
+          <div className="flex-1 overflow-y-auto px-7 py-5 space-y-6">
 
-            {/* Prioridad */}
+            {/* Descripción */}
             <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wide">
-                <Flag size={12} className="inline mr-1" />Prioridad
+              <label className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest mb-2" style={{ color: 'var(--ink-muted)' }}>
+                <AlignLeft size={13} /> Descripción
               </label>
-              <select
-                value={priority}
-                onChange={async e => {
-                  const val = e.target.value as Priority;
-                  setPriority(val);
-                  await saveField('priority', { priority: val });
+              <textarea
+                value={description}
+                onChange={e => setDescription(e.target.value)}
+                rows={4}
+                placeholder="Añade una descripción más detallada..."
+                className="w-full resize-none px-4 py-3 rounded-xl border-[1.5px] text-sm outline-none transition-all"
+                style={{
+                  borderColor: 'rgba(13,15,20,.1)',
+                  color: 'var(--ink)',
+                  background: 'var(--paper)',
+                  fontFamily: "'DM Sans', sans-serif",
+                  lineHeight: 1.6,
                 }}
-                className={`w-full text-sm px-3 py-2 rounded-lg border font-medium ${priorityColor[priority]} focus:outline-none`}
-              >
-                {PRIORITIES.map(p => (
-                  <option key={p} value={p}>{p}</option>
-                ))}
-              </select>
+                onFocus={e => (e.target.style.borderColor = 'var(--amber)')}
+                onBlur={e  => (e.target.style.borderColor = 'rgba(13,15,20,.1)')}
+              />
             </div>
 
-            {/* Fecha */}
+            {/* ── Tabs: Comentarios / Historial ── */}
             <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wide">
-                <Calendar size={12} className="inline mr-1" />Fecha límite
-              </label>
+              <div className="flex gap-1 mb-4 p-1 rounded-xl" style={{ background: 'var(--cream)', width: 'fit-content' }}>
+                {([
+                  { id: 'comments', label: 'Comentarios', icon: <MessageSquare size={13} /> },
+                  { id: 'history',  label: 'Historial',   icon: <Clock size={13} /> },
+                ] as const).map(tab => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id)}
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold transition-all"
+                    style={{
+                      background:  activeTab === tab.id ? 'white' : 'transparent',
+                      color:       activeTab === tab.id ? 'var(--ink)' : 'var(--ink-muted)',
+                      boxShadow:   activeTab === tab.id ? '0 1px 4px rgba(13,15,20,.08)' : 'none',
+                    }}
+                  >
+                    {tab.icon} {tab.label}
+                    {tab.id === 'comments' && comments.length > 0 && (
+                      <span className="ml-1 px-1.5 py-0.5 rounded-full text-xs" style={{ background: 'var(--amber)', color: 'white', fontSize: 10 }}>
+                        {comments.length}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+
+              {/* Comentarios */}
+              {activeTab === 'comments' && (
+                <div className="space-y-3">
+                  {loadingComments ? (
+                    <div className="flex justify-center py-6">
+                      <Loader2 className="animate-spin" size={20} style={{ color: 'var(--ink-muted)' }} />
+                    </div>
+                  ) : comments.length === 0 ? (
+                    <div className="text-center py-6">
+                      <MessageSquare size={28} style={{ color: 'var(--ink-muted)', margin: '0 auto 8px' }} />
+                      <p className="text-sm" style={{ color: 'var(--ink-muted)' }}>Sé el primero en comentar</p>
+                    </div>
+                  ) : (
+                    comments.map(comment => (
+                      <div key={comment.id} className="flex gap-3">
+                        {/* Avatar */}
+                        <div
+                          className="w-7 h-7 rounded-full flex items-center justify-center text-white font-bold flex-shrink-0 text-xs"
+                          style={{ background: 'var(--teal)' }}
+                        >
+                          {comment.user?.name?.charAt(0).toUpperCase() ?? '?'}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-baseline gap-2 mb-1">
+                            <span className="text-xs font-semibold" style={{ color: 'var(--ink)' }}>
+                              {comment.user?.name ?? 'Usuario'}
+                            </span>
+                            <span className="text-xs" style={{ color: 'var(--ink-muted)' }}>
+                              {format(new Date(comment.created_at), "dd MMM 'a las' HH:mm", { locale: es })}
+                            </span>
+                          </div>
+                          <div
+                            className="px-3 py-2 rounded-xl text-sm leading-relaxed"
+                            style={{ background: 'var(--paper)', color: 'var(--ink)' }}
+                          >
+                            {comment.content}
+                          </div>
+                        </div>
+                        {/* Eliminar (solo el propio) */}
+                        {comment.user_id === user?.id && (
+                          <button
+                            onClick={() => handleDeleteComment(comment.id)}
+                            className="opacity-0 group-hover:opacity-100 p-1 rounded transition-all"
+                            style={{ color: 'var(--ink-muted)', alignSelf: 'flex-start' }}
+                            onMouseOver={e => (e.currentTarget.style.color = '#c0392b')}
+                            onMouseOut={e  => (e.currentTarget.style.color = 'var(--ink-muted)')}
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        )}
+                      </div>
+                    ))
+                  )}
+                  <div ref={commentsEndRef} />
+
+                  {/* Input nuevo comentario */}
+                  <div className="flex gap-3 pt-2">
+                    <div
+                      className="w-7 h-7 rounded-full flex items-center justify-center text-white font-bold flex-shrink-0 text-xs"
+                      style={{ background: 'var(--amber)' }}
+                    >
+                      {user?.name?.charAt(0).toUpperCase() ?? '?'}
+                    </div>
+                    <div className="flex-1 flex gap-2">
+                      <input
+                        value={newComment}
+                        onChange={e => setNewComment(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendComment(); } }}
+                        placeholder="Escribe un comentario..."
+                        className="flex-1 px-4 py-2 rounded-xl border-[1.5px] text-sm outline-none transition-all"
+                        style={{
+                          borderColor: 'rgba(13,15,20,.1)',
+                          background: 'var(--paper)',
+                          color: 'var(--ink)',
+                        }}
+                        onFocus={e => (e.target.style.borderColor = 'var(--amber)')}
+                        onBlur={e  => (e.target.style.borderColor = 'rgba(13,15,20,.1)')}
+                      />
+                      <button
+                        onClick={handleSendComment}
+                        disabled={!newComment.trim() || sendingComment}
+                        className="px-3 py-2 rounded-xl transition-all disabled:opacity-40"
+                        style={{ background: 'var(--amber)', color: 'white' }}
+                      >
+                        {sendingComment ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Historial */}
+              {activeTab === 'history' && (
+                <div className="space-y-2">
+                  {loadingComments ? (
+                    <div className="flex justify-center py-6">
+                      <Loader2 className="animate-spin" size={20} style={{ color: 'var(--ink-muted)' }} />
+                    </div>
+                  ) : history.length === 0 ? (
+                    <p className="text-sm text-center py-6" style={{ color: 'var(--ink-muted)' }}>Sin historial aún</p>
+                  ) : (
+                    history.map(h => (
+                      <div key={h.id} className="flex gap-3 items-start">
+                        <div className="w-1.5 h-1.5 rounded-full mt-2 flex-shrink-0" style={{ background: 'var(--ink-muted)' }} />
+                        <div className="flex-1">
+                          <p className="text-sm" style={{ color: 'var(--ink-soft)' }}>{formatHistoryAction(h)}</p>
+                          <p className="text-xs mt-0.5" style={{ color: 'var(--ink-muted)' }}>
+                            {format(new Date(h.created_at), "dd MMM yyyy 'a las' HH:mm", { locale: es })}
+                          </p>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* ── Columna derecha: metadatos ─────────────────────────────── */}
+          <div
+            className="w-56 flex-shrink-0 overflow-y-auto py-5 px-4 space-y-5 border-l"
+            style={{ borderColor: 'rgba(13,15,20,.06)', background: 'rgba(248,247,244,.5)' }}
+          >
+            {/* Prioridad */}
+            <div ref={priorityRef} className="relative">
+              <p className="text-xs font-semibold uppercase tracking-widest mb-2" style={{ color: 'var(--ink-muted)' }}>
+                <Flag size={11} className="inline mr-1" /> Prioridad
+              </p>
+              <button
+                onClick={() => setShowPriorityDD(p => !p)}
+                className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl border-[1.5px] text-sm font-semibold transition-all"
+                style={{
+                  borderColor: 'rgba(13,15,20,.1)',
+                  background:  priorityConfig.bg,
+                  color:       priorityConfig.color,
+                }}
+              >
+                <span className="flex items-center gap-1.5">
+                  {priorityConfig.icon} {priorityConfig.label}
+                </span>
+                <ChevronDown size={13} />
+              </button>
+              {showPriorityDD && (
+                <div
+                  className="absolute z-10 w-full mt-1 rounded-xl border overflow-hidden"
+                  style={{ background: 'white', borderColor: 'rgba(13,15,20,.09)', boxShadow: '0 8px 24px rgba(13,15,20,.12)' }}
+                >
+                  {PRIORITY_OPTIONS.map(opt => (
+                    <button
+                      key={opt.value}
+                      onClick={() => { setPriority(opt.value); setShowPriorityDD(false); }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm font-semibold transition-colors text-left"
+                      style={{ color: opt.color, background: priority === opt.value ? opt.bg : 'transparent' }}
+                      onMouseOver={e => (e.currentTarget.style.background = opt.bg)}
+                      onMouseOut={e  => (e.currentTarget.style.background = priority === opt.value ? opt.bg : 'transparent')}
+                    >
+                      {opt.icon} {opt.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Responsable */}
+            <div ref={assigneeRef} className="relative">
+              <p className="text-xs font-semibold uppercase tracking-widest mb-2" style={{ color: 'var(--ink-muted)' }}>
+                <UserIcon size={11} className="inline mr-1" /> Responsable
+              </p>
+              <button
+                onClick={() => setShowAssigneeDD(p => !p)}
+                className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl border-[1.5px] text-sm transition-all"
+                style={{ borderColor: 'rgba(13,15,20,.1)', background: 'white', color: assignee ? 'var(--ink)' : 'var(--ink-muted)' }}
+              >
+                {assignee ? (
+                  <span className="flex items-center gap-2">
+                    <span className="w-5 h-5 rounded-full flex items-center justify-center text-white text-xs font-bold" style={{ background: 'var(--teal)' }}>
+                      {assignee.name.charAt(0).toUpperCase()}
+                    </span>
+                    <span className="truncate text-xs font-medium">{assignee.name}</span>
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-1.5 text-xs">
+                    <UserIcon size={13} /> Sin asignar
+                  </span>
+                )}
+                <ChevronDown size={13} />
+              </button>
+
+              {showAssigneeDD && (
+                <div
+                  className="absolute z-10 w-full mt-1 rounded-xl border overflow-hidden"
+                  style={{ background: 'white', borderColor: 'rgba(13,15,20,.09)', boxShadow: '0 8px 24px rgba(13,15,20,.12)' }}
+                >
+                  <button
+                    onClick={() => { setAssignedTo(null); setShowAssigneeDD(false); }}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-xs transition-colors text-left"
+                    style={{ color: 'var(--ink-muted)', background: !assignedTo ? 'var(--cream)' : 'transparent' }}
+                    onMouseOver={e => (e.currentTarget.style.background = 'var(--cream)')}
+                    onMouseOut={e  => (e.currentTarget.style.background = !assignedTo ? 'var(--cream)' : 'transparent')}
+                  >
+                    <UserIcon size={13} /> Sin asignar
+                  </button>
+                  {boardMembers.map(member => (
+                    <button
+                      key={member.id}
+                      onClick={() => { setAssignedTo(member.id); setShowAssigneeDD(false); }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-xs transition-colors text-left"
+                      style={{ color: 'var(--ink)', background: assignedTo === member.id ? 'var(--cream)' : 'transparent' }}
+                      onMouseOver={e => (e.currentTarget.style.background = 'var(--cream)')}
+                      onMouseOut={e  => (e.currentTarget.style.background = assignedTo === member.id ? 'var(--cream)' : 'transparent')}
+                    >
+                      <span className="w-5 h-5 rounded-full flex items-center justify-center text-white font-bold flex-shrink-0" style={{ background: 'var(--teal)', fontSize: 10 }}>
+                        {member.name.charAt(0).toUpperCase()}
+                      </span>
+                      <span className="truncate">{member.name}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Fecha límite */}
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-widest mb-2" style={{ color: 'var(--ink-muted)' }}>
+                <Calendar size={11} className="inline mr-1" /> Fecha límite
+              </p>
               <input
                 type="date"
                 value={dueDate}
                 onChange={e => setDueDate(e.target.value)}
-                onBlur={async () => {
-                  await saveField('due_date', { due_date: dueDate || null });
+                className="w-full px-3 py-2 rounded-xl border-[1.5px] text-sm outline-none transition-all"
+                style={{
+                  borderColor: isOverdue ? '#c0392b' : 'rgba(13,15,20,.1)',
+                  background:  isOverdue ? 'rgba(192,57,43,.06)' : 'white',
+                  color:       isOverdue ? '#c0392b' : 'var(--ink)',
                 }}
-                className="w-full text-sm px-3 py-2 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                onFocus={e => (e.target.style.borderColor = 'var(--amber)')}
+                onBlur={e  => (e.target.style.borderColor = isOverdue ? '#c0392b' : 'rgba(13,15,20,.1)')}
               />
-            </div>
-
-            {/* Asignado a */}
-            <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wide">
-                <UserIcon size={12} className="inline mr-1" />Asignado a
-              </label>
-              <select
-                value={assignedTo ?? ''}
-                onChange={async e => {
-                  const val = e.target.value ? parseInt(e.target.value) : null;
-                  setAssignedTo(val);
-                  await saveField('assigned_to', { assigned_to: val });
-                }}
-                className="w-full text-sm px-3 py-2 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="">Sin asignar</option>
-                {boardMembers.map(m => (
-                  <option key={m.id} value={m.id}>{m.name}</option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          {/* ── Descripción ──────────────────────────────────────────── */}
-          <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wide">
-              Descripción
-            </label>
-            <textarea
-              value={description}
-              onChange={e => setDescription(e.target.value)}
-              onBlur={async () => {
-                if (description !== (task.description ?? '')) {
-                  await saveField('description', { description });
-                }
-              }}
-              placeholder="Añade una descripción..."
-              rows={4}
-              className="w-full text-sm px-3 py-2 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-            />
-          </div>
-
-          {/* ── Tabs: Comentarios / Historial ─────────────────────────── */}
-          <div>
-            <div className="flex gap-4 border-b mb-4">
-              {(['comments', 'history'] as const).map(tab => (
+              {isOverdue && (
+                <p className="text-xs mt-1" style={{ color: '#c0392b' }}>⚠ Fecha vencida</p>
+              )}
+              {dueDate && (
                 <button
-                  key={tab}
-                  onClick={() => setActiveTab(tab)}
-                  className={`pb-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
-                    activeTab === tab
-                      ? 'border-blue-600 text-blue-600'
-                      : 'border-transparent text-gray-500 hover:text-gray-700'
-                  }`}
+                  onClick={() => setDueDate('')}
+                  className="mt-1 text-xs transition-colors"
+                  style={{ color: 'var(--ink-muted)' }}
+                  onMouseOver={e => (e.currentTarget.style.color = '#c0392b')}
+                  onMouseOut={e  => (e.currentTarget.style.color = 'var(--ink-muted)')}
                 >
-                  {tab === 'comments'
-                    ? <><MessageSquare size={14} className="inline mr-1" />Comentarios ({comments.length})</>
-                    : <><Clock size={14} className="inline mr-1" />Historial</>}
+                  × Quitar fecha
                 </button>
-              ))}
+              )}
             </div>
 
-            {/* Comentarios */}
-            {activeTab === 'comments' && (
-              <div className="space-y-4">
-                {loadingComments ? (
-                  <div className="flex justify-center py-4">
-                    <Loader2 className="animate-spin text-gray-400" size={20} />
-                  </div>
-                ) : comments.length === 0 ? (
-                  <p className="text-sm text-gray-400 text-center py-4">
-                    Aún no hay comentarios. ¡Sé el primero!
-                  </p>
-                ) : (
-                  comments.map(c => (
-                    <div key={c.id} className="flex gap-3">
-                      <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center flex-shrink-0">
-                        {c.user?.avatar_url
-                          ? <img src={c.user.avatar_url} alt={c.user.name} className="w-8 h-8 rounded-full" />
-                          : <UserIcon size={14} className="text-gray-500" />}
-                      </div>
-                      <div className="flex-1">
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm font-medium text-gray-700">
-                            {c.user?.name ?? 'Usuario'}
-                          </span>
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs text-gray-400">
-                              {format(new Date(c.created_at), 'dd MMM HH:mm', { locale: es })}
-                            </span>
-                            {user?.id === c.user_id && (
-                              <button
-                                onClick={() => handleDeleteComment(c.id)}
-                                className="text-gray-300 hover:text-red-500 transition-colors"
-                              >
-                                <Trash2 size={12} />
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                        <p className="text-sm text-gray-600 mt-1 bg-gray-50 rounded-lg px-3 py-2">
-                          {c.content}
-                        </p>
-                      </div>
-                    </div>
-                  ))
-                )}
-
-                {/* Input nuevo comentario */}
-                <div className="flex gap-3 pt-2">
-                  <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
-                    <UserIcon size={14} className="text-blue-600" />
-                  </div>
-                  <div className="flex-1 flex gap-2">
-                    <input
-                      type="text"
-                      value={newComment}
-                      onChange={e => setNewComment(e.target.value)}
-                      onKeyDown={e => { if (e.key === 'Enter') handleSendComment(); }}
-                      placeholder="Escribe un comentario..."
-                      className="flex-1 text-sm px-3 py-2 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                    <button
-                      onClick={handleSendComment}
-                      disabled={sendingComment || !newComment.trim()}
-                      className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                    >
-                      {sendingComment
-                        ? <Loader2 size={16} className="animate-spin" />
-                        : <Send size={16} />}
-                    </button>
-                  </div>
+            {/* Creado por */}
+            {task.creator && (
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-widest mb-2" style={{ color: 'var(--ink-muted)' }}>Creado por</p>
+                <div className="flex items-center gap-2">
+                  <span className="w-5 h-5 rounded-full flex items-center justify-center text-white text-xs font-bold" style={{ background: 'var(--amber)' }}>
+                    {task.creator.name.charAt(0).toUpperCase()}
+                  </span>
+                  <span className="text-xs" style={{ color: 'var(--ink-soft)' }}>{task.creator.name}</span>
                 </div>
               </div>
             )}
 
-            {/* Historial */}
-            {activeTab === 'history' && (
-              <div className="space-y-3">
-                {loadingHistory ? (
-                  <div className="flex justify-center py-4">
-                    <Loader2 className="animate-spin text-gray-400" size={20} />
+            {/* Eliminar tarea */}
+            <div className="pt-4 border-t" style={{ borderColor: 'rgba(13,15,20,.06)' }}>
+              {!confirmDelete ? (
+                <button
+                  onClick={() => setConfirmDelete(true)}
+                  className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold transition-all border-[1.5px]"
+                  style={{ borderColor: 'rgba(192,57,43,.25)', color: '#c0392b', background: 'rgba(192,57,43,.04)' }}
+                  onMouseOver={e => (e.currentTarget.style.background = 'rgba(192,57,43,.1)')}
+                  onMouseOut={e  => (e.currentTarget.style.background = 'rgba(192,57,43,.04)')}
+                >
+                  <Trash2 size={13} /> Eliminar tarea
+                </button>
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-xs text-center" style={{ color: '#c0392b' }}>¿Seguro?</p>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setConfirmDelete(false)}
+                      className="flex-1 px-2 py-1.5 rounded-lg text-xs border transition-colors"
+                      style={{ borderColor: 'rgba(13,15,20,.1)', color: 'var(--ink-muted)' }}
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      onClick={handleDelete}
+                      disabled={deleting}
+                      className="flex-1 px-2 py-1.5 rounded-lg text-xs font-semibold transition-colors"
+                      style={{ background: '#c0392b', color: 'white' }}
+                    >
+                      {deleting ? <Loader2 size={12} className="animate-spin mx-auto" /> : 'Eliminar'}
+                    </button>
                   </div>
-                ) : history.length === 0 ? (
-                  <p className="text-sm text-gray-400 text-center py-4">
-                    Sin historial de cambios aún.
-                  </p>
-                ) : (
-                  history.map(h => (
-                    <div key={h.id} className="flex gap-3 text-sm">
-                      <div className="w-2 h-2 rounded-full bg-blue-400 mt-2 flex-shrink-0" />
-                      <div>
-                        <span className="font-medium text-gray-700">
-                          {h.user?.name ?? 'Alguien'}
-                        </span>{' '}
-                        <span className="text-gray-500">{h.action}</span>
-                        {h.old_value && h.new_value && (
-                          <span className="text-gray-400">
-                            {' '}· <s>{h.old_value}</s> → {h.new_value}
-                          </span>
-                        )}
-                        <p className="text-xs text-gray-400 mt-0.5">
-                          {format(new Date(h.created_at), 'dd MMM yyyy HH:mm', { locale: es })}
-                        </p>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            )}
+                </div>
+              )}
+            </div>
           </div>
         </div>
+
+        {/* ── Footer: Guardar ────────────────────────────────────────────── */}
+        {isDirty && (
+          <div
+            className="flex items-center justify-between px-7 py-4 border-t"
+            style={{ borderColor: 'rgba(13,15,20,.07)', background: 'var(--surface)', flexShrink: 0 }}
+          >
+            <p className="text-xs" style={{ color: 'var(--ink-muted)' }}>Tienes cambios sin guardar</p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  setTitle(task.title);
+                  setDescription(task.description ?? '');
+                  setPriority(task.priority);
+                  setDueDate(task.due_date ?? '');
+                  setAssignedTo(task.assigned_to ?? null);
+                }}
+                className="px-4 py-2 rounded-xl text-xs font-medium border transition-colors"
+                style={{ borderColor: 'rgba(13,15,20,.1)', color: 'var(--ink-muted)' }}
+              >
+                Descartar
+              </button>
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                className="flex items-center gap-2 px-5 py-2 rounded-xl text-xs font-bold transition-all"
+                style={{
+                  fontFamily: "'Syne', sans-serif",
+                  background: 'var(--ink)',
+                  color: 'var(--paper)',
+                  opacity: saving ? 0.7 : 1,
+                }}
+              >
+                {saving ? <Loader2 size={13} className="animate-spin" /> : null}
+                Guardar cambios
+              </button>
+            </div>
+          </div>
+        )}
+
+        <style>{`
+          @keyframes modalIn {
+            from { opacity: 0; transform: scale(.96) translateY(8px); }
+            to   { opacity: 1; transform: scale(1) translateY(0); }
+          }
+        `}</style>
       </div>
     </div>
   );
