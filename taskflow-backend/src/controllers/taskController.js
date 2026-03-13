@@ -1,5 +1,5 @@
 // src/controllers/taskController.js
-const { Task, TaskComment, TaskHistory, User, Column, BoardMember } = require('../models');
+const { Task, TaskComment, TaskHistory, User, Column, BoardMember, Notification  } = require('../models');
 const { validationResult } = require('express-validator');
 const sequelize = require('../config/database');
 
@@ -285,28 +285,108 @@ const addComment = async (req, res) => {
   try {
     const { taskId } = req.params;
     const { content } = req.body;
+    const userId = req.user.id;
+
+    if (!content?.trim()) {
+      return res.status(400).json({ error: 'El comentario no puede estar vacío' });
+    }
 
     const task = await Task.findByPk(taskId);
     if (!task) return res.status(404).json({ error: 'Tarea no encontrada' });
 
-    // ── Al menos member para comentar ──
-    const role = await checkBoardRole(res, task.column_id, req.user.id, 'member');
-    if (!role) return;
+    const allowed = await checkBoardRole(res, task.column_id, userId, 'member');
+    if (!allowed) return;
+
+    const column  = await Column.findByPk(task.column_id, { attributes: ['board_id'] });
+    const boardId = column.board_id;
 
     const comment = await TaskComment.create({
-      content,
-      task_id: taskId,
-      user_id: req.user.id,
+      task_id:  taskId,
+      user_id:  userId,
+      content:  content.trim(),
     });
 
     const commentWithUser = await TaskComment.findByPk(comment.id, {
-      include: [{ model: User, as: 'user', attributes: ['id', 'name', 'avatar_url'] }],
+      include: [{ model: User, as: 'user', attributes: ['id', 'name', 'email', 'avatar_url'] }],
     });
 
-    res.status(201).json({ message: 'Comentario agregado exitosamente', comment: commentWithUser });
+    // Responder antes de procesar menciones
+    res.status(201).json({ comment: commentWithUser });
+
+    // ── DEBUG: menciones ──────────────────────────────────────────────────
+    console.log('🔍 [MENTIONS] content:', content);
+
+    const mentionHandles = [...content.matchAll(/@([\w\u00C0-\u024F]+(?:\s[\w\u00C0-\u024F]+)?)/g)]
+      .map(m => m[1].trim().toLowerCase());
+
+    console.log('🔍 [MENTIONS] handles encontrados:', mentionHandles);
+
+    if (mentionHandles.length === 0) {
+      console.log('🔍 [MENTIONS] Sin menciones en el contenido, saliendo.');
+      return;
+    }
+
+    const boardMembers = await BoardMember.findAll({
+      where: { board_id: boardId },
+      include: [{ model: User, as: 'user', attributes: ['id', 'name'] }],
+    });
+
+    console.log('🔍 [MENTIONS] miembros del tablero:', boardMembers.map(m => ({
+      user_id: m.user_id,
+      name: m.user?.name,
+    })));
+
+    const mentionedUserIds = new Set();
+    for (const member of boardMembers) {
+      const memberName = member.user?.name?.toLowerCase() ?? '';
+      const isMentioned = mentionHandles.some(handle =>
+        memberName.startsWith(handle) || memberName === handle
+      );
+      console.log(`🔍 [MENTIONS] ¿"${memberName}" coincide con ${JSON.stringify(mentionHandles)}? → ${isMentioned}`);
+      if (isMentioned && member.user_id !== userId) {
+        mentionedUserIds.add(member.user_id);
+      }
+    }
+
+    console.log('🔍 [MENTIONS] usuarios a notificar:', [...mentionedUserIds]);
+
+    if (mentionedUserIds.size === 0) {
+      console.log('🔍 [MENTIONS] Ningún usuario coincidió (o solo te mencionaste a ti mismo).');
+      return;
+    }
+
+    const authorName = req.user.name ?? 'Alguien';
+    const preview    = content.slice(0, 80) + (content.length > 80 ? '…' : '');
+
+    const results = await Promise.allSettled(
+      [...mentionedUserIds].map(mentionedId =>
+        Notification.create({
+          user_id: mentionedId,
+          type:    'MENTION',
+          data: {
+            message:    `${authorName} te mencionó: "${preview}"`,
+            task_id:    Number(taskId),
+            board_id:   boardId,
+            comment_id: comment.id,
+          },
+          is_read: false,
+        })
+      )
+    );
+
+    results.forEach((r, i) => {
+      if (r.status === 'rejected') {
+        console.error(`🔍 [MENTIONS] Error creando notificación ${i}:`, r.reason);
+      } else {
+        console.log(`🔍 [MENTIONS] Notificación creada para user_id:`, [...mentionedUserIds][i]);
+      }
+    });
+
   } catch (error) {
-    console.error('Error al agregar comentario:', error);
-    res.status(500).json({ error: 'Error al agregar el comentario' });
+    console.error('Error al añadir comentario:', error);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Error al crear el comentario' });
+    }
   }
 };
 

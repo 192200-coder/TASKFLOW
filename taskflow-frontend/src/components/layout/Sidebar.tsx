@@ -4,10 +4,20 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { LayoutDashboard, Users, Settings, LogOut, Layout, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import {
+  LayoutDashboard, Users, Settings, LogOut,
+  Layout, PanelLeftClose, PanelLeftOpen, X,
+} from 'lucide-react';
 import { useState } from 'react';
 
-export const Sidebar = () => {
+interface SidebarProps {
+  /** Móvil: controla si el drawer está visible */
+  mobileOpen?: boolean;
+  /** Callback para cerrar el drawer desde el layout */
+  onMobileClose?: () => void;
+}
+
+export const Sidebar = ({ mobileOpen = false, onMobileClose }: SidebarProps) => {
   const [collapsed, setCollapsed] = useState(false);
   const pathname = usePathname();
   const { user, logout } = useAuth();
@@ -26,21 +36,38 @@ export const Sidebar = () => {
     overflow: 'hidden', whiteSpace: 'nowrap',
   };
 
+  // En móvil siempre se muestra expandido cuando el drawer está abierto
+  const isCollapsed = collapsed;
+
   return (
     <aside
       style={{
-        width: collapsed ? 64 : 224,
-        minWidth: collapsed ? 64 : 224,
+        // ── Desktop: ancho fijo con colapso ──────────────────────────────────
+        width: isCollapsed ? 64 : 224,
+        minWidth: isCollapsed ? 64 : 224,
         height: '100vh',
         display: 'flex',
         flexDirection: 'column',
         background: '#0d0f14',
         borderRight: '1px solid rgba(255,255,255,.06)',
-        transition: 'width .25s cubic-bezier(.4,0,.2,1), min-width .25s cubic-bezier(.4,0,.2,1)',
+        transition: 'width .25s cubic-bezier(.4,0,.2,1), min-width .25s cubic-bezier(.4,0,.2,1), transform .25s cubic-bezier(.4,0,.2,1)',
         flexShrink: 0,
+        // ── Móvil: drawer deslizante ─────────────────────────────────────────
+        // Ocupa posición fija fuera del flujo, se desliza con transform
+        position: undefined,
+        zIndex: undefined,
       }}
+      // Usamos clases de Tailwind para el comportamiento móvil/desktop
+      // ya que los media queries no se pueden usar en inline styles
+      className={[
+        // En móvil: fixed drawer que entra/sale con translate
+        'fixed top-0 left-0 z-30',
+        mobileOpen ? 'translate-x-0' : '-translate-x-full',
+        // En desktop: vuelve al flujo normal, siempre visible
+        'lg:relative lg:translate-x-0 lg:z-auto',
+      ].join(' ')}
     >
-      {/* ── Logo + botón colapso (mismo nivel, mismo header) ── */}
+      {/* ── Header: Logo + botón colapso (desktop) / botón cerrar (móvil) ── */}
       <div
         style={{
           height: 56, display: 'flex', alignItems: 'center',
@@ -49,8 +76,8 @@ export const Sidebar = () => {
           flexShrink: 0,
         }}
       >
-        {/* Logo: solo visible expandido */}
-        {!collapsed && (
+        {/* Logo: visible cuando no está colapsado */}
+        {!isCollapsed && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
             <span style={{
               width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
@@ -66,17 +93,17 @@ export const Sidebar = () => {
           </div>
         )}
 
-        {/* Botón colapso — siempre visible, a la derecha del logo */}
+        {/* Botón cerrar — solo visible en móvil */}
         <button
-          onClick={() => setCollapsed(c => !c)}
-          title={collapsed ? 'Expandir menú' : 'Colapsar menú'}
+          onClick={onMobileClose}
+          className="lg:hidden"
           style={{
             ...btnBase,
             width: 32, minWidth: 32, height: 32,
             justifyContent: 'center',
             color: 'rgba(255,255,255,.3)',
             flexShrink: 0,
-            marginLeft: collapsed ? 'auto' : 0,
+            marginLeft: 'auto',
           }}
           onMouseOver={e => {
             (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,.07)';
@@ -87,7 +114,32 @@ export const Sidebar = () => {
             (e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,.3)';
           }}
         >
-          {collapsed
+          <X size={16} />
+        </button>
+
+        {/* Botón colapso — solo visible en desktop */}
+        <button
+          onClick={() => setCollapsed(c => !c)}
+          title={isCollapsed ? 'Expandir menú' : 'Colapsar menú'}
+          className="hidden lg:flex"
+          style={{
+            ...btnBase,
+            width: 32, minWidth: 32, height: 32,
+            justifyContent: 'center',
+            color: 'rgba(255,255,255,.3)',
+            flexShrink: 0,
+            marginLeft: isCollapsed ? 'auto' : 0,
+          }}
+          onMouseOver={e => {
+            (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,.07)';
+            (e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,.8)';
+          }}
+          onMouseOut={e => {
+            (e.currentTarget as HTMLElement).style.background = 'transparent';
+            (e.currentTarget as HTMLElement).style.color = 'rgba(255,255,255,.3)';
+          }}
+        >
+          {isCollapsed
             ? <PanelLeftOpen  size={16} />
             : <PanelLeftClose size={16} />
           }
@@ -111,7 +163,7 @@ export const Sidebar = () => {
             : user?.name?.charAt(0).toUpperCase()
           }
         </div>
-        {!collapsed && (
+        {!isCollapsed && (
           <div style={{ flex: 1, minWidth: 0 }}>
             <p style={{ color: 'white', fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', margin: 0 }}>
               {user?.name}
@@ -132,7 +184,8 @@ export const Sidebar = () => {
               <li key={item.href}>
                 <Link
                   href={item.href}
-                  title={collapsed ? item.label : undefined}
+                  title={isCollapsed ? item.label : undefined}
+                  onClick={onMobileClose} // cierra el drawer al navegar en móvil
                   style={{
                     display: 'flex', alignItems: 'center',
                     gap: 10, padding: '8px 10px', borderRadius: 12,
@@ -155,7 +208,7 @@ export const Sidebar = () => {
                   }}
                 >
                   <item.icon size={18} style={{ flexShrink: 0 }} />
-                  {!collapsed && <span style={{ fontSize: 13, fontWeight: 500 }}>{item.label}</span>}
+                  {!isCollapsed && <span style={{ fontSize: 13, fontWeight: 500 }}>{item.label}</span>}
                 </Link>
               </li>
             );
@@ -163,11 +216,11 @@ export const Sidebar = () => {
         </ul>
       </nav>
 
-      {/* ── Logout — solo él, sin nada más ── */}
+      {/* ── Logout ── */}
       <div style={{ padding: '10px 8px 16px', borderTop: '1px solid rgba(255,255,255,.06)', flexShrink: 0 }}>
         <button
           onClick={logout}
-          title={collapsed ? 'Cerrar sesión' : undefined}
+          title={isCollapsed ? 'Cerrar sesión' : undefined}
           style={{
             ...btnBase,
             gap: 10, padding: '8px 10px',
@@ -183,7 +236,7 @@ export const Sidebar = () => {
           }}
         >
           <LogOut size={18} style={{ flexShrink: 0 }} />
-          {!collapsed && <span style={{ fontSize: 13, fontWeight: 500 }}>Cerrar sesión</span>}
+          {!isCollapsed && <span style={{ fontSize: 13, fontWeight: 500 }}>Cerrar sesión</span>}
         </button>
       </div>
     </aside>

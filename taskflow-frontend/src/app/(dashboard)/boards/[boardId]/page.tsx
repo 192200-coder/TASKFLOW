@@ -1,7 +1,7 @@
 // src/app/(dashboard)/boards/[boardId]/page.tsx
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { boardsApi } from '@/lib/api/boards';
 import { Board, BoardMemberUser, Column } from '@/lib/types/board';
@@ -9,24 +9,29 @@ import { User } from '@/lib/types/user';
 import { KanbanBoard } from '@/components/tasks/KanbanBoard';
 import { InviteMemberModal } from '@/components/boards/InviteMemberModal';
 import { ColumnManager } from '@/components/boards/ColumnManager';
+import { TaskFilterBar, ActiveFilters, EMPTY_FILTERS } from '@/components/tasks/TaskFilterBar';
 import { useTasks } from '@/lib/hooks/useTasks';
 import { UserPlus, LayoutList, ChevronRight, Trash2, MoreVertical } from 'lucide-react';
 import Link from 'next/link';
 import toast from 'react-hot-toast';
+import { isAfter, isBefore, parseISO } from 'date-fns';
 
 export default function BoardPage() {
-  const params   = useParams();
-  const router   = useRouter();
-  const boardId  = parseInt(params.boardId as string);
+  const params  = useParams();
+  const router  = useRouter();
+  const boardId = parseInt(params.boardId as string);
 
-  const [board,          setBoard]          = useState<Board | null>(null);
-  const [boardMembers,   setBoardMembers]   = useState<User[]>([]);
-  const [pageLoading,    setPageLoading]    = useState(true);
-  const [showInvite,     setShowInvite]     = useState(false);
-  const [showColumns,    setShowColumns]    = useState(false);
-  const [showBoardMenu,  setShowBoardMenu]  = useState(false);
-  const [deletingBoard,  setDeletingBoard]  = useState(false);
-  const [confirmDelete,  setConfirmDelete]  = useState(false);
+  const [board,         setBoard]         = useState<Board | null>(null);
+  const [boardMembers,  setBoardMembers]  = useState<User[]>([]);
+  const [pageLoading,   setPageLoading]   = useState(true);
+  const [showInvite,    setShowInvite]    = useState(false);
+  const [showColumns,   setShowColumns]   = useState(false);
+  const [showBoardMenu, setShowBoardMenu] = useState(false);
+  const [deletingBoard, setDeletingBoard] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  // ── Filtros ────────────────────────────────────────────────────────────────
+  const [filters, setFilters] = useState<ActiveFilters>(EMPTY_FILTERS);
 
   const { columns, createTask, updateTask, moveTask, deleteTask, setColumnsFromBoard } =
     useTasks(board?.columns ?? []);
@@ -61,8 +66,6 @@ export default function BoardPage() {
     );
   };
 
-  // Tras cambiar un rol, recargar el board desde el servidor
-  // para que el estado local refleje la fuente de verdad del backend
   const handleMemberRoleChanged = useCallback(async () => {
     try {
       const data = await boardsApi.getBoard(boardId);
@@ -88,6 +91,46 @@ export default function BoardPage() {
       setConfirmDelete(false);
     }
   };
+
+  // ── Filtrado client-side ────────────────────────────────────────────────────
+  // Las tareas ya están cargadas en memoria — filtramos sin llamadas extra al backend.
+  // Para búsquedas complejas o tableros muy grandes se puede usar el endpoint
+  // GET /boards/:boardId/tasks/search del backend.
+  const filteredColumns = useMemo(() => {
+    const { q, priorities, assignedTo, columnId, dueBefore, dueAfter } = filters;
+
+    const hasFilters = q || priorities.length > 0 || assignedTo !== null ||
+                       columnId !== null || dueBefore || dueAfter;
+
+    if (!hasFilters) return columns;
+
+    return columns
+      .filter(col => columnId === null || col.id === columnId)
+      .map(col => ({
+        ...col,
+        tasks: (col.tasks ?? []).filter(task => {
+          // Título
+          if (q && !task.title.toLowerCase().includes(q.toLowerCase())) return false;
+
+          // Prioridad
+          if (priorities.length > 0 && !priorities.includes(task.priority)) return false;
+
+          // Responsable
+          if (assignedTo === 'unassigned' && task.assigned_to !== null) return false;
+          if (typeof assignedTo === 'number' && task.assigned_to !== assignedTo) return false;
+
+          // Fecha límite
+          if (dueAfter  && task.due_date && isBefore(parseISO(task.due_date), parseISO(dueAfter)))  return false;
+          if (dueBefore && task.due_date && isAfter(parseISO(task.due_date),  parseISO(dueBefore))) return false;
+          if ((dueAfter || dueBefore) && !task.due_date) return false;
+
+          return true;
+        }),
+      }));
+  }, [columns, filters]);
+
+  const totalTasks   = useMemo(() => columns.reduce((acc, c) => acc + (c.tasks?.length ?? 0), 0), [columns]);
+  const visibleTasks = useMemo(() => filteredColumns.reduce((acc, c) => acc + (c.tasks?.length ?? 0), 0), [filteredColumns]);
 
   if (pageLoading) {
     return (
@@ -119,7 +162,7 @@ export default function BoardPage() {
   return (
     <div className="flex flex-col h-full">
 
-      {/* Header */}
+      {/* ── Header ── */}
       <div
         className="flex items-center justify-between px-6 py-4 border-b flex-shrink-0"
         style={{ borderColor: 'rgba(13,15,20,.07)', background: 'var(--surface)' }}
@@ -147,15 +190,12 @@ export default function BoardPage() {
 
         <div className="flex items-center gap-3">
           {/* Avatares */}
-          <div className="flex -space-x-2">
+          <div className="hidden sm:flex -space-x-2">
             {displayMembers.slice(0, 4).map(member => (
               <div
                 key={member.id}
                 className="w-7 h-7 rounded-full border-2 flex items-center justify-center text-white font-bold text-xs"
-                style={{
-                  background:  board.owner_id === member.id ? 'var(--amber)' : 'var(--teal)',
-                  borderColor: 'var(--surface)',
-                }}
+                style={{ background: board.owner_id === member.id ? 'var(--amber)' : 'var(--teal)', borderColor: 'var(--surface)' }}
                 title={member.name}
               >
                 {member.avatar_url
@@ -174,16 +214,17 @@ export default function BoardPage() {
             )}
           </div>
 
-          <div className="w-px h-6" style={{ background: 'rgba(13,15,20,.1)' }} />
+          <div className="hidden sm:block w-px h-6" style={{ background: 'rgba(13,15,20,.1)' }} />
 
           <button
             onClick={() => setShowColumns(true)}
             className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold border transition-all"
             style={{ borderColor: 'rgba(13,15,20,.1)', color: 'var(--ink-muted)', background: 'transparent' }}
-            onMouseOver={e => { (e.currentTarget as HTMLElement).style.background = 'var(--cream)'; }}
-            onMouseOut={e  => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
+            onMouseOver={e => (e.currentTarget as HTMLElement).style.background = 'var(--cream)'}
+            onMouseOut={e  => (e.currentTarget as HTMLElement).style.background = 'transparent'}
           >
-            <LayoutList size={14} /> Columnas
+            <LayoutList size={14} />
+            <span className="hidden sm:inline">Columnas</span>
           </button>
 
           <button
@@ -193,10 +234,11 @@ export default function BoardPage() {
             onMouseOver={e => (e.currentTarget as HTMLElement).style.opacity = '.85'}
             onMouseOut={e  => (e.currentTarget as HTMLElement).style.opacity = '1'}
           >
-            <UserPlus size={14} /> Invitar
+            <UserPlus size={14} />
+            <span className="hidden sm:inline">Invitar</span>
           </button>
 
-          {/* Menú contextual del tablero */}
+          {/* Menú contextual */}
           <div className="relative">
             <button
               onClick={() => { setShowBoardMenu(p => !p); setConfirmDelete(false); }}
@@ -204,22 +246,15 @@ export default function BoardPage() {
               style={{ color: 'var(--ink-muted)' }}
               onMouseOver={e => (e.currentTarget as HTMLElement).style.background = 'var(--cream)'}
               onMouseOut={e  => (e.currentTarget as HTMLElement).style.background = 'transparent'}
-              title="Opciones del tablero"
             >
               <MoreVertical size={16} />
             </button>
-
             {showBoardMenu && (
               <>
                 <div className="fixed inset-0 z-30" onClick={() => { setShowBoardMenu(false); setConfirmDelete(false); }} />
                 <div
                   className="absolute right-0 mt-1 rounded-xl border overflow-hidden z-40"
-                  style={{
-                    background:  'white',
-                    borderColor: 'rgba(13,15,20,.09)',
-                    boxShadow:   '0 8px 24px rgba(13,15,20,.14)',
-                    minWidth:    180,
-                  }}
+                  style={{ background: 'white', borderColor: 'rgba(13,15,20,.09)', boxShadow: '0 8px 24px rgba(13,15,20,.14)', minWidth: 180 }}
                 >
                   {!confirmDelete ? (
                     <button
@@ -229,26 +264,23 @@ export default function BoardPage() {
                       onMouseOver={e => (e.currentTarget.style.background = 'rgba(192,57,43,.07)')}
                       onMouseOut={e  => (e.currentTarget.style.background = 'transparent')}
                     >
-                      <Trash2 size={14} />
-                      Eliminar tablero
+                      <Trash2 size={14} /> Eliminar tablero
                     </button>
                   ) : (
                     <div className="px-4 py-3">
-                      <p className="text-xs font-semibold mb-2" style={{ color: 'var(--ink)' }}>
-                        ¿Eliminar permanentemente?
-                      </p>
+                      <p className="text-xs font-semibold mb-2" style={{ color: 'var(--ink)' }}>¿Eliminar permanentemente?</p>
                       <div className="flex gap-2">
                         <button
                           onClick={handleDeleteBoard}
                           disabled={deletingBoard}
-                          className="flex-1 py-1.5 rounded-lg text-xs font-bold text-white transition-all disabled:opacity-50"
+                          className="flex-1 py-1.5 rounded-lg text-xs font-bold text-white disabled:opacity-50"
                           style={{ background: '#c0392b' }}
                         >
                           {deletingBoard ? 'Eliminando...' : 'Sí, eliminar'}
                         </button>
                         <button
                           onClick={() => setConfirmDelete(false)}
-                          className="flex-1 py-1.5 rounded-lg text-xs font-semibold border transition-all"
+                          className="flex-1 py-1.5 rounded-lg text-xs font-semibold border"
                           style={{ borderColor: 'rgba(13,15,20,.1)', color: 'var(--ink-muted)' }}
                         >
                           Cancelar
@@ -263,10 +295,22 @@ export default function BoardPage() {
         </div>
       </div>
 
-      {/* Kanban */}
+      {/* ── Barra de filtros ── */}
+      <TaskFilterBar
+        boardMembers={boardMembers}
+        columns={columns}
+        filters={filters}
+        totalTasks={totalTasks}
+        visibleTasks={visibleTasks}
+        onChange={setFilters}
+        onClear={() => setFilters(EMPTY_FILTERS)}
+      />
+
+      {/* ── Kanban ── */}
       <div className="flex-1 overflow-auto p-6">
         <KanbanBoard
-          columns={columns}
+          columns={filteredColumns}
+          allColumns={columns}
           boardMembers={boardMembers}
           onTaskMove={moveTask}
           onTaskCreate={createTask}
@@ -283,7 +327,6 @@ export default function BoardPage() {
           onMemberRoleChanged={handleMemberRoleChanged}
         />
       )}
-
       {showColumns && (
         <ColumnManager
           boardId={boardId}

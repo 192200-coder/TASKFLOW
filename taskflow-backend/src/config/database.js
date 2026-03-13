@@ -1,67 +1,105 @@
-// src/config/database.js
 const { Sequelize } = require('sequelize');
 const { dbConfig } = require('./environment');
 
-const sequelize = new Sequelize(
-  dbConfig.database,
-  dbConfig.username,
-  dbConfig.password,
-  {
-    host: dbConfig.host,
-    port: dbConfig.port,
-    dialect: 'mysql',
-    logging: process.env.NODE_ENV === 'development' ? console.log : false,
-    dialectOptions: {
-      multipleStatements: true,
-      // ✅ Mantener conexiones vivas — evita que MySQL las cierre por inactividad
-      keepAlive: true,
-      connectTimeout: 20000,
-    },
-    define: {
-      timestamps: true,
-      underscored: true,
-      createdAt: 'created_at',
-      updatedAt: 'updated_at',
-    },
-    pool: {
-      max: 5,
-      min: 1,        // ✅ Mantener al menos 1 conexión viva siempre
-      acquire: 30000,
-      idle: 10000,
-      evict: 10000,  // ✅ Revisar y descartar conexiones muertas cada 10s
-    },
-  }
-);
+/**
+ * Crear instancia de Sequelize dependiendo del entorno
+ */
+const getSequelizeInstance = (options = {}) => {
 
-// ✅ Configurar sql_mode en cada nueva conexión
-// mysql2 entrega la conexión raw con API de callbacks — NO usar .promise() aquí
-sequelize.addHook('afterConnect', async (connection) => {
-  try {
-    await new Promise((resolve, reject) => {
-      connection.query(
-        "SET SESSION sql_mode = 'NO_ENGINE_SUBSTITUTION'",
-        (err) => (err ? reject(err) : resolve())
-      );
+  // Usar SQLite en memoria para tests
+  if (process.env.NODE_ENV === 'test' && !options.forceMySQL) {
+
+    console.log('🧪 Usando SQLite en memoria para pruebas');
+
+    return new Sequelize('sqlite::memory:', {
+      logging: false,
+      define: {
+        timestamps: true,
+        underscored: true,
+        createdAt: 'created_at',
+        updatedAt: 'updated_at'
+      }
     });
-  } catch (error) {
-    // No bloqueamos el servidor si falla
-    console.warn('⚠️  sql_mode no configurado en esta conexión:', error.message);
-  }
-});
 
-const initializeDatabase = async () => {
-  try {
-    await sequelize.authenticate();
-    console.log('✅ Conexión a la base de datos establecida correctamente');
-
-    const [result] = await sequelize.query("SELECT @@SESSION.sql_mode as mode");
-    console.log('📊 sql_mode activo:', result[0]?.mode);
-  } catch (error) {
-    console.error('❌ Error al conectar con la base de datos:', error);
-    throw error;
   }
+
+  // Usar MySQL en development / production
+  console.log(`🗄️ Conectando a MySQL (${process.env.NODE_ENV})`);
+
+  return new Sequelize(
+    dbConfig.database,
+    dbConfig.username,
+    dbConfig.password,
+    {
+      host: dbConfig.host,
+      port: dbConfig.port,
+      dialect: 'mysql',
+      logging: false,
+      define: {
+        timestamps: true,
+        underscored: true,
+        createdAt: 'created_at',
+        updatedAt: 'updated_at'
+      }
+    }
+  );
+
 };
 
+const sequelize = getSequelizeInstance();
+
+/**
+ * Configuración adicional solo para MySQL
+ */
+if (sequelize.getDialect() === 'mysql') {
+
+  sequelize.addHook('afterConnect', async (connection) => {
+
+    try {
+
+      await new Promise((resolve, reject) => {
+        connection.query(
+          "SET SESSION sql_mode = 'NO_ENGINE_SUBSTITUTION'",
+          (err) => err ? reject(err) : resolve()
+        );
+      });
+
+    } catch (error) {
+
+      console.warn('⚠️ sql_mode no configurado:', error.message);
+
+    }
+
+  });
+
+}
+
+/**
+ * Inicializar base de datos (usado por server.js)
+ */
+const initializeDatabase = async () => {
+
+  try {
+
+    await sequelize.authenticate();
+    console.log('✅ Conexión a la base de datos establecida');
+
+    await sequelize.sync();
+    console.log('✅ Modelos sincronizados');
+
+  } catch (error) {
+
+    console.error('❌ Error al inicializar la base de datos:', error);
+    throw error;
+
+  }
+
+};
+
+/**
+ * Exports
+ */
 module.exports = sequelize;
 module.exports.sequelize = sequelize;
+module.exports.getSequelizeInstance = getSequelizeInstance;
 module.exports.initializeDatabase = initializeDatabase;

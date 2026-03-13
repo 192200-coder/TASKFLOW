@@ -3,7 +3,8 @@
 
 import {
   DndContext, DragEndEvent, DragStartEvent,
-  PointerSensor, useSensor, useSensors,
+  PointerSensor, TouchSensor,
+  useSensor, useSensors,
   closestCenter, DragOverlay,
 } from '@dnd-kit/core';
 import { SortableContext, horizontalListSortingStrategy } from '@dnd-kit/sortable';
@@ -12,10 +13,12 @@ import { Task, CreateTaskDTO, UpdateTaskDTO } from '@/lib/types/task';
 import { User } from '@/lib/types/user';
 import { Column } from './Column';
 import { TaskCard } from './TaskCard';
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 
 interface KanbanBoardProps {
-  columns: ColumnType[];
+  columns:     ColumnType[];
+  /** Todas las columnas sin filtrar — necesarias para resolver el drop cuando hay filtros activos */
+  allColumns?: ColumnType[];
   boardMembers?: User[];
   onTaskMove:   (taskId: number, newColumnId: number, newPosition: number) => void;
   onTaskCreate: (data: CreateTaskDTO) => Promise<Task | null>;
@@ -25,6 +28,7 @@ interface KanbanBoardProps {
 
 export const KanbanBoard = ({
   columns,
+  allColumns,
   boardMembers = [],
   onTaskMove,
   onTaskCreate,
@@ -33,12 +37,25 @@ export const KanbanBoard = ({
 }: KanbanBoardProps) => {
   const [activeTask, setActiveTask] = useState<Task | null>(null);
 
+  // Siempre apunta a las columnas completas (sin filtros) para resolver drops
+  const allColumnsRef = useRef<ColumnType[]>(allColumns ?? columns);
+  allColumnsRef.current = allColumns ?? columns;
+
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 8 },
+    }),
+    useSensor(TouchSensor, {
+      activationConstraint: {
+        delay:     250,
+        tolerance: 5,
+      },
+    })
   );
 
+  // Busca en TODAS las columnas (no las filtradas) para no perder tareas ocultas
   const findTask = (taskId: number): Task | null => {
-    for (const col of columns) {
+    for (const col of allColumnsRef.current) {
       const found = col.tasks?.find(t => t.id === taskId);
       if (found) return found;
     }
@@ -46,7 +63,7 @@ export const KanbanBoard = ({
   };
 
   const findColumnOfTask = (taskId: number): ColumnType | null =>
-    columns.find(col => col.tasks?.some(t => t.id === taskId)) ?? null;
+    allColumnsRef.current.find(col => col.tasks?.some(t => t.id === taskId)) ?? null;
 
   const handleDragStart = (event: DragStartEvent) => {
     const rawId = event.active.id as string;
@@ -73,7 +90,7 @@ export const KanbanBoard = ({
 
     if (overRaw.startsWith('column-')) {
       targetColumnId = parseInt(overRaw.replace('column-', ''), 10);
-      const targetCol = columns.find(c => c.id === targetColumnId);
+      const targetCol = allColumnsRef.current.find(c => c.id === targetColumnId);
       targetPosition  = targetCol?.tasks?.length ?? 0;
     } else if (overRaw.startsWith('task-')) {
       const overTaskId = parseInt(overRaw.replace('task-', ''), 10);
@@ -83,8 +100,8 @@ export const KanbanBoard = ({
       targetPosition = overColumn.tasks?.findIndex(t => t.id === overTaskId) ?? 0;
     }
 
-    const currentPosition    = currentColumn.tasks?.findIndex(t => t.id === taskId) ?? 0;
-    const sameColumnSamePos  = currentColumn.id === targetColumnId && currentPosition === targetPosition;
+    const currentPosition   = currentColumn.tasks?.findIndex(t => t.id === taskId) ?? 0;
+    const sameColumnSamePos = currentColumn.id === targetColumnId && currentPosition === targetPosition;
     if (!sameColumnSamePos) onTaskMove(taskId, targetColumnId, targetPosition);
   };
 
@@ -99,7 +116,22 @@ export const KanbanBoard = ({
         items={columns.map(c => `column-${c.id}`)}
         strategy={horizontalListSortingStrategy}
       >
-        <div className="flex gap-4 overflow-x-auto pb-4 h-full items-start">
+        {/*
+          overflow-x-auto + scroll-smooth: scroll horizontal nativo en móvil
+          pb-4: espacio para que las sombras de las cards no se corten
+          items-start: las columnas se alinean arriba, no se estiran
+        */}
+        <div
+          className="flex gap-4 overflow-x-auto pb-4 h-full items-start"
+          style={{
+            WebkitOverflowScrolling: 'touch',
+            overscrollBehaviorX:     'contain',
+            // pan-x: el contenedor solo captura swipes horizontales (scroll).
+            // Las tarjetas tienen touch-action: none propio, así que dnd-kit
+            // toma el control cuando el touch empieza sobre una tarjeta.
+            touchAction: 'pan-x',
+          }}
+        >
           {[...columns]
             .sort((a, b) => a.position - b.position)
             .map(column => (
@@ -115,7 +147,7 @@ export const KanbanBoard = ({
         </div>
       </SortableContext>
 
-      {/* ── Overlay de drag: sombra pronunciada (feedback UX-01) ── */}
+      {/* Overlay de drag con sombra pronunciada */}
       <DragOverlay dropAnimation={{
         duration: 200,
         easing: 'cubic-bezier(.18,.67,.6,1.22)',

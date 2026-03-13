@@ -3,7 +3,7 @@
 
 import { Board, BoardMemberUser } from '@/lib/types/board';
 import { useRouter } from 'next/navigation';
-import { MoreHorizontal, Users } from 'lucide-react';
+import { Crown } from 'lucide-react';
 
 interface BoardCardProps {
   board: Board;
@@ -13,17 +13,39 @@ interface BoardCardProps {
 export const BoardCard = ({ board, isOwner }: BoardCardProps) => {
   const router = useRouter();
 
-  const handleClick = () => {
-    router.push(`/boards/${board.id}`);
-  };
+  // Paleta de gradientes para portadas sin imagen — rota por id del tablero
+  const gradients = [
+    'linear-gradient(135deg, #e8913a 0%, #c2642a 100%)',
+    'linear-gradient(135deg, #2a7d6e 0%, #1a5248 100%)',
+    'linear-gradient(135deg, #0d0f14 0%, #3a3d4a 100%)',
+    'linear-gradient(135deg, #c2642a 0%, #e8913a 80%)',
+    'linear-gradient(135deg, #1a5248 0%, #2a7d6e 100%)',
+  ];
+  const gradient = gradients[board.id % gradients.length];
 
   return (
     <div
-      onClick={handleClick}
-      className="group relative bg-white rounded-lg shadow-sm hover:shadow-md transition-shadow cursor-pointer border border-gray-200 overflow-hidden"
+      onClick={() => router.push(`/boards/${board.id}`)}
+      className="group relative rounded-2xl border cursor-pointer overflow-hidden transition-all"
+      style={{
+        background:  'var(--surface)',
+        borderColor: 'rgba(13,15,20,.08)',
+        boxShadow:   '0 1px 4px rgba(13,15,20,.06)',
+      }}
+      onMouseOver={e => {
+        (e.currentTarget as HTMLElement).style.boxShadow = '0 8px 28px rgba(13,15,20,.12)';
+        (e.currentTarget as HTMLElement).style.transform = 'translateY(-2px)';
+      }}
+      onMouseOut={e => {
+        (e.currentTarget as HTMLElement).style.boxShadow = '0 1px 4px rgba(13,15,20,.06)';
+        (e.currentTarget as HTMLElement).style.transform = 'translateY(0)';
+      }}
     >
-      {/* Cover Image */}
-      <div className="h-32 bg-gradient-to-br from-blue-500 to-purple-600 relative">
+      {/* Portada */}
+      <div
+        className="h-28 relative overflow-hidden"
+        style={{ background: gradient }}
+      >
         {board.cover_image_url && (
           <img
             src={board.cover_image_url}
@@ -31,64 +53,69 @@ export const BoardCard = ({ board, isOwner }: BoardCardProps) => {
             className="w-full h-full object-cover"
           />
         )}
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            // TODO: Abrir menú de opciones
-          }}
-          className="absolute top-2 right-2 p-1 bg-black/50 rounded-full text-white opacity-0 group-hover:opacity-100 transition-opacity"
-        >
-          <MoreHorizontal size={16} />
-        </button>
+
+        {/* Badge owner */}
+        {isOwner && (
+          <span
+            className="absolute top-3 right-3 flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-full"
+            style={{ background: 'rgba(13,15,20,.45)', color: 'white', backdropFilter: 'blur(4px)' }}
+          >
+            <Crown size={10} /> Dueño
+          </span>
+        )}
       </div>
 
-      {/* Content */}
+      {/* Contenido */}
       <div className="p-4">
-        <h3 className="font-semibold text-gray-800 mb-1">{board.name}</h3>
+        <h3
+          className="font-bold mb-1 truncate"
+          style={{ fontFamily: "'Syne', sans-serif", fontSize: '0.95rem', letterSpacing: '-.02em', color: 'var(--ink)' }}
+        >
+          {board.name}
+        </h3>
+
         {board.description && (
-          <p className="text-sm text-gray-600 line-clamp-2 mb-3">
+          <p
+            className="text-xs line-clamp-2 mb-3"
+            style={{ color: 'var(--ink-muted)', lineHeight: 1.55 }}
+          >
             {board.description}
           </p>
         )}
 
-        {/* Members preview */}
-        {/* Sequelize M:M: members es BoardMemberUser[] (campos de User en raíz + BoardMember pivot) */}
-        <div className="flex items-center justify-between">
+        {/* Miembros */}
+        <div className="flex items-center justify-between mt-3">
           <div className="flex -space-x-2">
-            {board.members?.slice(0, 3).map((member: BoardMemberUser) => (
+            {board.members?.slice(0, 4).map((member: BoardMemberUser) => (
               <div
                 key={member.id}
-                className="w-6 h-6 rounded-full bg-gray-300 border-2 border-white flex items-center justify-center overflow-hidden"
+                className="w-6 h-6 rounded-full border-2 flex items-center justify-center text-white font-bold overflow-hidden"
+                style={{
+                  background:  board.owner_id === member.id ? 'var(--amber)' : 'var(--teal)',
+                  borderColor: 'var(--surface)',
+                  fontSize: 9,
+                }}
                 title={member.name}
               >
-                {member.avatar_url ? (
-                  <img
-                    src={member.avatar_url}
-                    alt={member.name}
-                    className="w-full h-full rounded-full object-cover"
-                  />
-                ) : (
-                  <span className="text-xs font-medium">
-                    {member.name.charAt(0).toUpperCase()}
-                  </span>
-                )}
+                {member.avatar_url
+                  ? <img src={member.avatar_url} alt={member.name} className="w-full h-full object-cover" />
+                  : member.name.charAt(0).toUpperCase()
+                }
               </div>
             ))}
-            {(board.members?.length || 0) > 3 && (
-              <div className="w-6 h-6 rounded-full bg-gray-200 border-2 border-white flex items-center justify-center">
-                <span className="text-xs font-medium text-gray-600">
-                  +{(board.members?.length || 0) - 3}
-                </span>
+            {(board.members?.length ?? 0) > 4 && (
+              <div
+                className="w-6 h-6 rounded-full border-2 flex items-center justify-center text-xs font-semibold"
+                style={{ background: 'var(--cream)', borderColor: 'var(--surface)', color: 'var(--ink-muted)' }}
+              >
+                +{(board.members?.length ?? 0) - 4}
               </div>
             )}
           </div>
 
-          {isOwner && (
-            <span className="text-xs text-gray-500 flex items-center gap-1">
-              <Users size={12} />
-              Dueño
-            </span>
-          )}
+          <span className="text-xs" style={{ color: 'var(--ink-muted)' }}>
+            {board.members?.length ?? 0} {board.members?.length === 1 ? 'miembro' : 'miembros'}
+          </span>
         </div>
       </div>
     </div>

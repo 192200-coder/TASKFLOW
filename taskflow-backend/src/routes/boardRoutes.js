@@ -12,6 +12,7 @@ const {
   deleteBoard,
   inviteMember,
   updateMemberRole,
+  searchTasks,
 } = require('../controllers/boardController');
 
 router.use(authenticate);
@@ -46,5 +47,7 @@ router.patch('/:boardId/members/:userId',
   [body('role').isIn(['admin', 'member', 'viewer']).withMessage('Rol inválido')],
   updateMemberRole
 );
+// Búsqueda de tareas — viewer puede buscar
+router.get('/:boardId/tasks/search', requireBoardRole('viewer'), searchTasks);
 
 module.exports = router;

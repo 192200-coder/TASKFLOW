@@ -3,10 +3,17 @@ const { Notification } = require('../models');
 
 const getMyNotifications = async (req, res) => {
   try {
+    // Cache-Control: no-store — evita el 304 que hace que el cliente
+    // siempre reciba la respuesta cacheada (vacía en el primer load)
+    res.set('Cache-Control', 'no-store');
+
     const notifications = await Notification.findAll({
-      where: { user_id: req.user.id },
+      where: {
+        user_id: req.user.id,
+        is_read: false,          // ← solo no leídas
+      },
       order: [['created_at', 'DESC']],
-      limit: 50
+      limit: 50,
     });
 
     res.json(notifications);
@@ -18,13 +25,12 @@ const getMyNotifications = async (req, res) => {
 
 const markAsRead = async (req, res) => {
   try {
+    res.set('Cache-Control', 'no-store');
+
     const { notificationId } = req.params;
 
     const notification = await Notification.findOne({
-      where: {
-        id: notificationId,
-        user_id: req.user.id
-      }
+      where: { id: notificationId, user_id: req.user.id },
     });
 
     if (!notification) {
@@ -32,7 +38,6 @@ const markAsRead = async (req, res) => {
     }
 
     await notification.update({ is_read: true });
-
     res.json({ message: 'Notificación marcada como leída' });
   } catch (error) {
     console.error('Error al marcar notificación:', error);
@@ -42,6 +47,8 @@ const markAsRead = async (req, res) => {
 
 const markAllAsRead = async (req, res) => {
   try {
+    res.set('Cache-Control', 'no-store');
+
     await Notification.update(
       { is_read: true },
       { where: { user_id: req.user.id, is_read: false } }
@@ -54,8 +61,4 @@ const markAllAsRead = async (req, res) => {
   }
 };
 
-module.exports = {
-  getMyNotifications,
-  markAsRead,
-  markAllAsRead
-};
+module.exports = { getMyNotifications, markAsRead, markAllAsRead };

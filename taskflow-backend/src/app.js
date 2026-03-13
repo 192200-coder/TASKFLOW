@@ -20,6 +20,10 @@ const allowedOrigins = [
   process.env.FRONTEND_URL || 'http://localhost:3001',
   'http://localhost:3000',
   'http://localhost:3001',
+  'http://192.168.43.57:3000', // celular
+  'http://192.168.43.57:3001', // ← agregar
+  'http://192.168.43.120:3000', // PC en red local
+  'http://192.168.43.120:3001'
 ];
 
 app.use(cors({

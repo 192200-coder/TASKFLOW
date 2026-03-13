@@ -14,6 +14,7 @@ import {
 import { format, isAfter, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
 import toast from 'react-hot-toast';
+import { MentionInput } from './MentionInput';
 
 interface TaskDetailModalProps {
   task: Task;
@@ -54,7 +55,6 @@ export const TaskDetailModal = ({
   const [comments,        setComments]        = useState<TaskComment[]>([]);
   const [history,         setHistory]         = useState<TaskHistory[]>([]);
   const [loadingComments, setLoadingComments] = useState(true);
-  const [newComment,      setNewComment]      = useState('');
   const [sendingComment,  setSendingComment]  = useState(false);
   const [showPriorityDD,  setShowPriorityDD]  = useState(false);
   const [showAssigneeDD,  setShowAssigneeDD]  = useState(false);
@@ -145,17 +145,6 @@ export const TaskDetailModal = ({
     onClose();
   };
 
-  // ── Enviar comentario ─────────────────────────────────────────────────
-  const handleSendComment = async () => {
-    if (!newComment.trim()) return;
-    setSendingComment(true);
-    try {
-      const created = await tasksApi.createComment(task.id, newComment.trim());
-      setComments(prev => [...prev, created]);
-      setNewComment('');
-    } catch { toast.error('Error al enviar comentario'); }
-    finally { setSendingComment(false); }
-  };
 
   const handleDeleteComment = async (commentId: number) => {
     try {
@@ -189,6 +178,73 @@ export const TaskDetailModal = ({
       case 'ASSIGN': return `${who} cambió el responsable`;
       default:       return `${who} realizó una acción`;
     }
+  };
+
+  const renderCommentContent = (content: string, members: User[] = []) => {
+    // Set de nombres completos en minúsculas para lookup exacto
+    const knownNames = new Set(members.map(m => m.name.trim().toLowerCase()));
+  
+    // Split por tokens que empiecen con @ (captura el separador)
+    const tokens = content.split(/(@\S+(?:\s\S+)?)/);
+  
+    return (
+      <>
+        {tokens.map((token, i) => {
+          if (!token.startsWith('@')) return <span key={i}>{token}</span>;
+  
+          const twoWordMatch = token.match(/^@([\w\u00C0-\u024F]+\s[\w\u00C0-\u024F]+)/);
+          const oneWordMatch = token.match(/^@([\w\u00C0-\u024F]+)/);
+  
+          let matchedHandle: string | null = null;
+          let remainder = '';
+  
+          // Intentar primero dos palabras (@Nombre Apellido) — solo si existe ese nombre
+          if (twoWordMatch) {
+            const candidate = twoWordMatch[1].toLowerCase();
+            if (knownNames.has(candidate)) {
+              matchedHandle = twoWordMatch[1];
+              remainder     = token.slice(twoWordMatch[0].length);
+            }
+          }
+  
+          // Si no matcheó, intentar una palabra
+          if (!matchedHandle && oneWordMatch) {
+            const candidate = oneWordMatch[1].toLowerCase();
+            const isKnown = knownNames.size > 0
+              ? [...knownNames].some(n =>
+                  n === candidate ||
+                  n.startsWith(candidate + ' ') ||
+                  n === candidate
+                )
+              : true; // sin lista de miembros: resaltar cualquier @palabra
+  
+            if (isKnown) {
+              matchedHandle = oneWordMatch[1];
+              remainder     = token.slice(oneWordMatch[0].length);
+            }
+          }
+  
+          if (!matchedHandle) return <span key={i}>{token}</span>;
+  
+          return (
+            <span key={i}>
+              <span
+                style={{
+                  color:        'var(--amber)',
+                  fontWeight:   700,
+                  background:   'rgba(232,145,58,.1)',
+                  borderRadius: 4,
+                  padding:      '0 3px',
+                }}
+              >
+                @{matchedHandle}
+              </span>
+              {remainder}
+            </span>
+          );
+        })}
+      </>
+    );
   };
 
   return (
@@ -340,7 +396,7 @@ export const TaskDetailModal = ({
                             className="px-3 py-2 rounded-xl text-sm leading-relaxed"
                             style={{ background: 'var(--paper)', color: 'var(--ink)' }}
                           >
-                            {comment.content}
+                            {renderCommentContent(comment.content, boardMembers)}
                           </div>
                         </div>
                         {/* Eliminar (solo el propio) */}
@@ -360,37 +416,33 @@ export const TaskDetailModal = ({
                   )}
                   <div ref={commentsEndRef} />
 
-                  {/* Input nuevo comentario */}
-                  <div className="flex gap-3 pt-2">
-                    <div
-                      className="w-7 h-7 rounded-full flex items-center justify-center text-white font-bold flex-shrink-0 text-xs"
-                      style={{ background: 'var(--amber)' }}
-                    >
-                      {user?.name?.charAt(0).toUpperCase() ?? '?'}
-                    </div>
-                    <div className="flex-1 flex gap-2">
-                      <input
-                        value={newComment}
-                        onChange={e => setNewComment(e.target.value)}
-                        onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendComment(); } }}
-                        placeholder="Escribe un comentario..."
-                        className="flex-1 px-4 py-2 rounded-xl border-[1.5px] text-sm outline-none transition-all"
-                        style={{
-                          borderColor: 'rgba(13,15,20,.1)',
-                          background: 'var(--paper)',
-                          color: 'var(--ink)',
-                        }}
-                        onFocus={e => (e.target.style.borderColor = 'var(--amber)')}
-                        onBlur={e  => (e.target.style.borderColor = 'rgba(13,15,20,.1)')}
-                      />
-                      <button
-                        onClick={handleSendComment}
-                        disabled={!newComment.trim() || sendingComment}
-                        className="px-3 py-2 rounded-xl transition-all disabled:opacity-40"
-                        style={{ background: 'var(--amber)', color: 'white' }}
+                  {/* Input nuevo comentario con menciones */}
+                  <div className="pt-2">
+                    {/* Avatar del usuario actual */}
+                    <div className="flex gap-3 items-start mb-2">
+                      <div
+                        className="w-7 h-7 rounded-full flex items-center justify-center text-white font-bold flex-shrink-0 text-xs mt-1"
+                        style={{ background: 'var(--amber)' }}
                       >
-                        {sendingComment ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
-                      </button>
+                        {user?.name?.charAt(0).toUpperCase() ?? '?'}
+                      </div>
+                      <div className="flex-1">
+                        <MentionInput
+                          boardMembers={boardMembers}
+                          sending={sendingComment}
+                          onSend={async (content) => {
+                            setSendingComment(true);
+                            try {
+                              const created = await tasksApi.createComment(task.id, content);
+                              setComments(prev => [...prev, created]);
+                            } catch {
+                              toast.error('Error al enviar comentario');
+                            } finally {
+                              setSendingComment(false);
+                            }
+                          }}
+                        />
+                      </div>
                     </div>
                   </div>
                 </div>

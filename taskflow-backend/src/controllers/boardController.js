@@ -2,6 +2,7 @@
 const { Board, BoardMember, Column, Task, User } = require('../models');
 const sequelize = require('../config/database');
 const { validationResult } = require('express-validator');
+const { Op } = require('sequelize');
 
 // ─── Helper: fetch completo del board (reutilizable) ─────────────────────────
 const fetchFullBoard = (boardId) =>
@@ -257,4 +258,85 @@ const updateMemberRole = async (req, res) => {
   }
 };
 
-module.exports = { createBoard, getMyBoards, getBoardById, updateBoard, deleteBoard, inviteMember, updateMemberRole };
+const searchTasks = async (req, res) => {
+  try {
+    const { boardId } = req.params;
+    const { q, priority, assigned_to, column_id, due_before, due_after } = req.query;
+ 
+    // ── Verificar que el usuario es al menos viewer ───────────────────────
+    const membership = await BoardMember.findOne({
+      where: { board_id: boardId, user_id: req.user.id },
+    });
+    if (!membership) {
+      return res.status(403).json({ error: 'No eres miembro de este tablero' });
+    }
+ 
+    // ── Obtener las columnas del tablero ──────────────────────────────────
+    const columnWhere = { board_id: boardId };
+    if (column_id) columnWhere.id = parseInt(column_id);
+ 
+    const columns = await Column.findAll({
+      where: columnWhere,
+      attributes: ['id'],
+    });
+    const columnIds = columns.map(c => c.id);
+ 
+    if (columnIds.length === 0) {
+      return res.json({ tasks: [], total: 0 });
+    }
+ 
+    // ── Construir el where de tareas ──────────────────────────────────────
+    const taskWhere = { column_id: { [Op.in]: columnIds } };
+ 
+    // Búsqueda por título
+    if (q?.trim()) {
+      taskWhere.title = { [Op.like]: `%${q.trim()}%` };
+    }
+ 
+    // Filtro por prioridad (acepta uno o varios separados por coma)
+    if (priority) {
+      const priorities = priority.split(',').map(p => p.trim()).filter(Boolean);
+      if (priorities.length === 1) {
+        taskWhere.priority = priorities[0];
+      } else if (priorities.length > 1) {
+        taskWhere.priority = { [Op.in]: priorities };
+      }
+    }
+ 
+    // Filtro por responsable
+    if (assigned_to) {
+      if (assigned_to === 'unassigned') {
+        taskWhere.assigned_to = null;
+      } else {
+        taskWhere.assigned_to = parseInt(assigned_to);
+      }
+    }
+ 
+    // Filtro por fecha límite
+    if (due_before || due_after) {
+      taskWhere.due_date = {};
+      if (due_before) taskWhere.due_date[Op.lte] = new Date(due_before);
+      if (due_after)  taskWhere.due_date[Op.gte] = new Date(due_after);
+    }
+ 
+    // ── Ejecutar query ────────────────────────────────────────────────────
+    const tasks = await Task.findAll({
+      where: taskWhere,
+      include: [
+        { model: User, as: 'assignee', attributes: ['id', 'name', 'avatar_url'] },
+        { model: User, as: 'creator',  attributes: ['id', 'name'] },
+      ],
+      order: [
+        ['column_id', 'ASC'],
+        ['position',  'ASC'],
+      ],
+    });
+ 
+    res.json({ tasks, total: tasks.length });
+  } catch (error) {
+    console.error('Error al buscar tareas:', error);
+    res.status(500).json({ error: 'Error al buscar tareas' });
+  }
+};
+
+module.exports = { createBoard, getMyBoards, getBoardById, updateBoard, deleteBoard, inviteMember, updateMemberRole, searchTasks };
