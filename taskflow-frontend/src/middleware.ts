@@ -1,8 +1,8 @@
-// src/middleware.ts   ← IMPORTANTE: debe estar aquí, no como proxy.ts
+// src/middleware.ts
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
-export function proxy(request: NextRequest) {
+export function middleware(request: NextRequest) {
   const tokenFromCookie = request.cookies.get('token')?.value;
   const tokenFromHeader = request.headers.get('authorization')?.replace('Bearer ', '');
   const token = tokenFromCookie || tokenFromHeader;
