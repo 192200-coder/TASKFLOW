@@ -11,7 +11,10 @@ module.exports = {
     port: process.env.DB_PORT,
     database: process.env.DB_NAME,
     username: process.env.DB_USER,
-    password: process.env.DB_PASSWORD
+    password: process.env.DB_PASSWORD,
+    ssl: {
+      rejectUnauthorized: false // <--- Agrega esto para Aiven
+    }
   },
   jwt: {
     secret: process.env.JWT_SECRET,

@@ -35,6 +35,11 @@ const getSequelizeInstance = (options = {}) => {
       port: dbConfig.port,
       dialect: 'mysql',
       logging: false,
+      dialectOptions: {
+        ssl: {
+          rejectUnauthorized: false
+        }
+      },
       define: {
         timestamps: true,
         underscored: true,
