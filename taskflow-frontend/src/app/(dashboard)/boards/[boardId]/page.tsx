@@ -307,8 +307,9 @@ export default function BoardPage() {
       />
 
       {/* ── Kanban ── */}
-      <div className="flex-1 overflow-auto p-6">
-        <KanbanBoard
+      <div className="flex-1 overflow-hidden flex flex-col">
+        <div className="flex-1 overflow-auto sm:p-6 pt-4 sm:pt-6 px-0 sm:px-6">
+          <KanbanBoard
           columns={filteredColumns}
           allColumns={columns}
           boardMembers={boardMembers}
@@ -316,7 +317,8 @@ export default function BoardPage() {
           onTaskCreate={createTask}
           onTaskUpdate={updateTask}
           onTaskDelete={deleteTask}
-        />
+          />
+        </div>
       </div>
 
       {showInvite && (

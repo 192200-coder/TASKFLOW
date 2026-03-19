@@ -16,9 +16,8 @@ import { TaskCard } from './TaskCard';
 import { useState, useRef } from 'react';
 
 interface KanbanBoardProps {
-  columns:     ColumnType[];
-  /** Todas las columnas sin filtrar — necesarias para resolver el drop cuando hay filtros activos */
-  allColumns?: ColumnType[];
+  columns:      ColumnType[];
+  allColumns?:  ColumnType[];
   boardMembers?: User[];
   onTaskMove:   (taskId: number, newColumnId: number, newPosition: number) => void;
   onTaskCreate: (data: CreateTaskDTO) => Promise<Task | null>;
@@ -36,24 +35,16 @@ export const KanbanBoard = ({
   onTaskDelete,
 }: KanbanBoardProps) => {
   const [activeTask, setActiveTask] = useState<Task | null>(null);
+  const [activeColIdx, setActiveColIdx] = useState(0);
 
-  // Siempre apunta a las columnas completas (sin filtros) para resolver drops
   const allColumnsRef = useRef<ColumnType[]>(allColumns ?? columns);
   allColumnsRef.current = allColumns ?? columns;
 
   const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: { distance: 8 },
-    }),
-    useSensor(TouchSensor, {
-      activationConstraint: {
-        delay:     250,
-        tolerance: 5,
-      },
-    })
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor,   { activationConstraint: { delay: 250, tolerance: 5 } })
   );
 
-  // Busca en TODAS las columnas (no las filtradas) para no perder tareas ocultas
   const findTask = (taskId: number): Task | null => {
     for (const col of allColumnsRef.current) {
       const found = col.tasks?.find(t => t.id === taskId);
@@ -105,6 +96,8 @@ export const KanbanBoard = ({
     if (!sameColumnSamePos) onTaskMove(taskId, targetColumnId, targetPosition);
   };
 
+  const sorted = [...columns].sort((a, b) => a.position - b.position);
+
   return (
     <DndContext
       sensors={sensors}
@@ -113,52 +106,63 @@ export const KanbanBoard = ({
       onDragEnd={handleDragEnd}
     >
       <SortableContext
-        items={columns.map(c => `column-${c.id}`)}
+        items={sorted.map(c => `column-${c.id}`)}
         strategy={horizontalListSortingStrategy}
       >
-        {/*
-          overflow-x-auto + scroll-smooth: scroll horizontal nativo en móvil
-          pb-4: espacio para que las sombras de las cards no se corten
-          items-start: las columnas se alinean arriba, no se estiran
-        */}
+        {/* ── Indicador de columna activa (solo móvil) ── */}
+        {sorted.length > 1 && (
+          <div className="flex sm:hidden justify-center gap-1.5 mb-3 flex-shrink-0">
+            {sorted.map((col, idx) => (
+              <div
+                key={col.id}
+                className="rounded-full transition-all"
+                style={{
+                  width:      idx === activeColIdx ? 20 : 6,
+                  height:     6,
+                  background: idx === activeColIdx ? 'var(--amber)' : 'rgba(13,15,20,.15)',
+                }}
+              />
+            ))}
+          </div>
+        )}
+
         <div
           className="flex gap-4 overflow-x-auto pb-4 h-full items-start"
           style={{
             WebkitOverflowScrolling: 'touch',
             overscrollBehaviorX:     'contain',
-            // pan-x: el contenedor solo captura swipes horizontales (scroll).
-            // Las tarjetas tienen touch-action: none propio, así que dnd-kit
-            // toma el control cuando el touch empieza sobre una tarjeta.
-            touchAction: 'pan-x',
+            touchAction:             'pan-x',
+            // Scroll snap solo en móvil — en desktop scroll libre
+            scrollSnapType:          'x mandatory',
+            // Padding lateral para que la columna no quede pegada al borde en móvil
+            paddingLeft:             'max(16px, env(safe-area-inset-left))',
+            paddingRight:            'max(16px, env(safe-area-inset-right))',
+          }}
+          onScroll={e => {
+            // Actualizar indicador de columna activa
+            const el = e.currentTarget;
+            const scrollLeft = el.scrollLeft;
+            const colWidth = el.scrollWidth / sorted.length;
+            setActiveColIdx(Math.round(scrollLeft / colWidth));
           }}
         >
-          {[...columns]
-            .sort((a, b) => a.position - b.position)
-            .map(column => (
-              <Column
-                key={column.id}
-                column={column}
-                boardMembers={boardMembers}
-                onTaskCreate={onTaskCreate}
-                onTaskUpdate={onTaskUpdate}
-                onTaskDelete={onTaskDelete}
-              />
-            ))}
+          {sorted.map(column => (
+            <Column
+              key={column.id}
+              column={column}
+              boardMembers={boardMembers}
+              onTaskCreate={onTaskCreate}
+              onTaskUpdate={onTaskUpdate}
+              onTaskDelete={onTaskDelete}
+            />
+          ))}
         </div>
       </SortableContext>
 
-      {/* Overlay de drag con sombra pronunciada */}
-      <DragOverlay dropAnimation={{
-        duration: 200,
-        easing: 'cubic-bezier(.18,.67,.6,1.22)',
-      }}>
+      <DragOverlay dropAnimation={{ duration: 200, easing: 'cubic-bezier(.18,.67,.6,1.22)' }}>
         {activeTask && (
           <div style={{ transform: 'rotate(2deg)', filter: 'drop-shadow(0 20px 40px rgba(13,15,20,.25))' }}>
-            <TaskCard
-              task={activeTask}
-              boardMembers={boardMembers}
-              isDragOverlay
-            />
+            <TaskCard task={activeTask} boardMembers={boardMembers} isDragOverlay />
           </div>
         )}
       </DragOverlay>
