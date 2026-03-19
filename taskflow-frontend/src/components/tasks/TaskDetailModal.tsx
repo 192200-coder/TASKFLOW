@@ -31,6 +31,233 @@ const PRIORITY_OPTIONS: { value: Priority; label: string; icon: React.ReactNode;
   { value: 'Baja',  label: 'Baja',  icon: <CheckCircle2 size={13}/>, color: '#1e7e34', bg: 'rgba(39,174,96,.1)' },
 ];
 
+// ── MetaPanel extraído como componente independiente ──────────────────────────
+// IMPORTANTE: este componente NO puede vivir dentro de TaskDetailModal porque
+// React lo recrearía en cada render, invalidando los refs y rompiendo los
+// event-listeners que detectan clicks fuera del dropdown.
+interface MetaPanelProps {
+  priority:       Priority;
+  setPriority:    (p: Priority) => void;
+  assignedTo:     number | null;
+  setAssignedTo:  (id: number | null) => void;
+  dueDate:        string;
+  setDueDate:     (d: string) => void;
+  boardMembers:   User[];
+  task:           Task;
+  confirmDelete:  boolean;
+  setConfirmDelete: (v: boolean) => void;
+  deleting:       boolean;
+  onDelete:       () => void;
+}
+
+const MetaPanel = ({
+  priority, setPriority,
+  assignedTo, setAssignedTo,
+  dueDate, setDueDate,
+  boardMembers,
+  task,
+  confirmDelete, setConfirmDelete,
+  deleting, onDelete,
+}: MetaPanelProps) => {
+  // Los refs y estados de los dropdowns viven AQUÍ, dentro del componente
+  // estable, de manera que nunca se pierden entre renders del padre.
+  const [showPriorityDD, setShowPriorityDD] = useState(false);
+  const [showAssigneeDD, setShowAssigneeDD] = useState(false);
+  const priorityRef = useRef<HTMLDivElement>(null);
+  const assigneeRef = useRef<HTMLDivElement>(null);
+
+  const priorityConfig = PRIORITY_OPTIONS.find(o => o.value === priority) ?? PRIORITY_OPTIONS[1];
+  const assignee = assignedTo ? boardMembers.find(m => m.id === assignedTo) : null;
+  const isOverdue = dueDate && isAfter(new Date(), parseISO(dueDate));
+
+  // Cerrar dropdowns al hacer clic fuera — los refs ahora siempre son válidos
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (priorityRef.current && !priorityRef.current.contains(e.target as Node))
+        setShowPriorityDD(false);
+      if (assigneeRef.current && !assigneeRef.current.contains(e.target as Node))
+        setShowAssigneeDD(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []); // deps vacías: el effect se monta/desmonta con el componente, no con el padre
+
+  return (
+    <div className="space-y-5">
+      {/* Prioridad */}
+      <div ref={priorityRef} className="relative">
+        <p className="text-xs font-semibold uppercase tracking-widest mb-2" style={{ color: 'var(--ink-muted)' }}>
+          <Flag size={11} className="inline mr-1" /> Prioridad
+        </p>
+        <button
+          onClick={() => setShowPriorityDD(p => !p)}
+          className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl border-[1.5px] text-sm font-semibold transition-all"
+          style={{ borderColor: 'rgba(13,15,20,.1)', background: priorityConfig.bg, color: priorityConfig.color }}
+        >
+          <span className="flex items-center gap-1.5">{priorityConfig.icon} {priorityConfig.label}</span>
+          <ChevronDown size={13} style={{ transform: showPriorityDD ? 'rotate(180deg)' : 'none', transition: 'transform .15s ease' }} />
+        </button>
+        {showPriorityDD && (
+          <div
+            className="absolute z-10 w-full mt-1 rounded-xl border overflow-hidden"
+            style={{ background: 'white', borderColor: 'rgba(13,15,20,.09)', boxShadow: '0 8px 24px rgba(13,15,20,.12)' }}
+          >
+            {PRIORITY_OPTIONS.map(opt => (
+              <button
+                key={opt.value}
+                onClick={() => { setPriority(opt.value); setShowPriorityDD(false); }}
+                className="w-full flex items-center gap-2 px-3 py-2 text-sm font-semibold transition-colors text-left"
+                style={{ color: opt.color, background: priority === opt.value ? opt.bg : 'transparent' }}
+                onMouseOver={e => (e.currentTarget.style.background = opt.bg)}
+                onMouseOut={e  => (e.currentTarget.style.background = priority === opt.value ? opt.bg : 'transparent')}
+              >
+                {opt.icon} {opt.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Responsable */}
+      <div ref={assigneeRef} className="relative">
+        <p className="text-xs font-semibold uppercase tracking-widest mb-2" style={{ color: 'var(--ink-muted)' }}>
+          <UserIcon size={11} className="inline mr-1" /> Responsable
+        </p>
+        <button
+          onClick={() => setShowAssigneeDD(p => !p)}
+          className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl border-[1.5px] text-sm transition-all"
+          style={{ borderColor: 'rgba(13,15,20,.1)', background: 'white', color: assignee ? 'var(--ink)' : 'var(--ink-muted)' }}
+        >
+          {assignee ? (
+            <span className="flex items-center gap-2">
+              <span className="w-5 h-5 rounded-full flex items-center justify-center text-white text-xs font-bold" style={{ background: 'var(--teal)' }}>
+                {assignee.name.charAt(0).toUpperCase()}
+              </span>
+              <span className="truncate text-xs font-medium">{assignee.name}</span>
+            </span>
+          ) : (
+            <span className="flex items-center gap-1.5 text-xs"><UserIcon size={13} /> Sin asignar</span>
+          )}
+          <ChevronDown size={13} style={{ transform: showAssigneeDD ? 'rotate(180deg)' : 'none', transition: 'transform .15s ease' }} />
+        </button>
+        {showAssigneeDD && (
+          <div
+            className="absolute z-10 w-full mt-1 rounded-xl border overflow-hidden"
+            style={{ background: 'white', borderColor: 'rgba(13,15,20,.09)', boxShadow: '0 8px 24px rgba(13,15,20,.12)' }}
+          >
+            <button
+              onClick={() => { setAssignedTo(null); setShowAssigneeDD(false); }}
+              className="w-full flex items-center gap-2 px-3 py-2 text-xs transition-colors text-left"
+              style={{ color: 'var(--ink-muted)', background: !assignedTo ? 'var(--cream)' : 'transparent' }}
+              onMouseOver={e => (e.currentTarget.style.background = 'var(--cream)')}
+              onMouseOut={e  => (e.currentTarget.style.background = !assignedTo ? 'var(--cream)' : 'transparent')}
+            >
+              <UserIcon size={13} /> Sin asignar
+            </button>
+            {boardMembers.map(member => (
+              <button
+                key={member.id}
+                onClick={() => { setAssignedTo(member.id); setShowAssigneeDD(false); }}
+                className="w-full flex items-center gap-2 px-3 py-2 text-xs transition-colors text-left"
+                style={{ color: 'var(--ink)', background: assignedTo === member.id ? 'var(--cream)' : 'transparent' }}
+                onMouseOver={e => (e.currentTarget.style.background = 'var(--cream)')}
+                onMouseOut={e  => (e.currentTarget.style.background = assignedTo === member.id ? 'var(--cream)' : 'transparent')}
+              >
+                <span className="w-5 h-5 rounded-full flex items-center justify-center text-white font-bold flex-shrink-0" style={{ background: 'var(--teal)', fontSize: 10 }}>
+                  {member.name.charAt(0).toUpperCase()}
+                </span>
+                <span className="truncate">{member.name}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Fecha límite */}
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-widest mb-2" style={{ color: 'var(--ink-muted)' }}>
+          <Calendar size={11} className="inline mr-1" /> Fecha límite
+        </p>
+        <input
+          type="date"
+          value={dueDate}
+          onChange={e => setDueDate(e.target.value)}
+          className="w-full px-3 py-2 rounded-xl border-[1.5px] text-sm outline-none transition-all"
+          style={{
+            borderColor: isOverdue ? '#c0392b' : 'rgba(13,15,20,.1)',
+            background:  isOverdue ? 'rgba(192,57,43,.06)' : 'white',
+            color:       isOverdue ? '#c0392b' : 'var(--ink)',
+          }}
+          onFocus={e => (e.target.style.borderColor = 'var(--amber)')}
+          onBlur={e  => (e.target.style.borderColor = isOverdue ? '#c0392b' : 'rgba(13,15,20,.1)')}
+        />
+        {isOverdue && <p className="text-xs mt-1" style={{ color: '#c0392b' }}>⚠ Fecha vencida</p>}
+        {dueDate && (
+          <button
+            onClick={() => setDueDate('')}
+            className="mt-1 text-xs transition-colors"
+            style={{ color: 'var(--ink-muted)' }}
+            onMouseOver={e => (e.currentTarget.style.color = '#c0392b')}
+            onMouseOut={e  => (e.currentTarget.style.color = 'var(--ink-muted)')}
+          >
+            × Quitar fecha
+          </button>
+        )}
+      </div>
+
+      {/* Creado por */}
+      {task.creator && (
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-widest mb-2" style={{ color: 'var(--ink-muted)' }}>Creado por</p>
+          <div className="flex items-center gap-2">
+            <span className="w-5 h-5 rounded-full flex items-center justify-center text-white text-xs font-bold" style={{ background: 'var(--amber)' }}>
+              {task.creator.name.charAt(0).toUpperCase()}
+            </span>
+            <span className="text-xs" style={{ color: 'var(--ink-soft)' }}>{task.creator.name}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Eliminar */}
+      <div className="pt-4 border-t" style={{ borderColor: 'rgba(13,15,20,.06)' }}>
+        {!confirmDelete ? (
+          <button
+            onClick={() => setConfirmDelete(true)}
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold transition-all border-[1.5px]"
+            style={{ borderColor: 'rgba(192,57,43,.25)', color: '#c0392b', background: 'rgba(192,57,43,.04)' }}
+            onMouseOver={e => (e.currentTarget.style.background = 'rgba(192,57,43,.1)')}
+            onMouseOut={e  => (e.currentTarget.style.background = 'rgba(192,57,43,.04)')}
+          >
+            <Trash2 size={13} /> Eliminar tarea
+          </button>
+        ) : (
+          <div className="space-y-2">
+            <p className="text-xs text-center" style={{ color: '#c0392b' }}>¿Seguro?</p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setConfirmDelete(false)}
+                className="flex-1 px-2 py-1.5 rounded-lg text-xs border transition-colors"
+                style={{ borderColor: 'rgba(13,15,20,.1)', color: 'var(--ink-muted)' }}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={onDelete}
+                disabled={deleting}
+                className="flex-1 px-2 py-1.5 rounded-lg text-xs font-semibold transition-colors"
+                style={{ background: '#c0392b', color: 'white' }}
+              >
+                {deleting ? <Loader2 size={12} className="animate-spin mx-auto" /> : 'Eliminar'}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// ── Componente principal ──────────────────────────────────────────────────────
 export const TaskDetailModal = ({
   task,
   boardMembers = [],
@@ -54,15 +281,10 @@ export const TaskDetailModal = ({
   const [history,         setHistory]         = useState<TaskHistory[]>([]);
   const [loadingComments, setLoadingComments] = useState(true);
   const [sendingComment,  setSendingComment]  = useState(false);
-  const [showPriorityDD,  setShowPriorityDD]  = useState(false);
-  const [showAssigneeDD,  setShowAssigneeDD]  = useState(false);
   const [confirmDelete,   setConfirmDelete]   = useState(false);
-  // móvil: panel de metadatos colapsable
   const [metaOpen,        setMetaOpen]        = useState(false);
 
   const titleRef       = useRef<HTMLTextAreaElement>(null);
-  const priorityRef    = useRef<HTMLDivElement>(null);
-  const assigneeRef    = useRef<HTMLDivElement>(null);
   const commentsEndRef = useRef<HTMLDivElement>(null);
 
   const isDirty =
@@ -94,17 +316,6 @@ export const TaskDetailModal = ({
       commentsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
   }, [comments, activeTab]);
-
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (priorityRef.current && !priorityRef.current.contains(e.target as Node))
-        setShowPriorityDD(false);
-      if (assigneeRef.current && !assigneeRef.current.contains(e.target as Node))
-        setShowAssigneeDD(false);
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, []);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -144,15 +355,6 @@ export const TaskDetailModal = ({
       setComments(prev => prev.filter(c => c.id !== commentId));
     } catch { toast.error('Error al eliminar comentario'); }
   };
-
-  const getPriorityConfig = (p: Priority) =>
-    PRIORITY_OPTIONS.find(o => o.value === p) ?? PRIORITY_OPTIONS[1];
-
-  const getAssignee = () =>
-    assignedTo ? boardMembers.find(m => m.id === assignedTo) : null;
-
-  const priorityConfig = getPriorityConfig(priority);
-  const assignee       = getAssignee();
 
   const formatHistoryAction = (h: TaskHistory & { field_changed?: string | null }) => {
     const who = h.user?.name ?? 'Alguien';
@@ -207,153 +409,16 @@ export const TaskDetailModal = ({
     );
   };
 
-  // ── Panel de metadatos (reutilizado en desktop sidebar y móvil accordion) ──
-  const MetaPanel = () => (
-    <div className="space-y-5">
-      {/* Prioridad */}
-      <div ref={priorityRef} className="relative">
-        <p className="text-xs font-semibold uppercase tracking-widest mb-2" style={{ color: 'var(--ink-muted)' }}>
-          <Flag size={11} className="inline mr-1" /> Prioridad
-        </p>
-        <button
-          onClick={() => setShowPriorityDD(p => !p)}
-          className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl border-[1.5px] text-sm font-semibold transition-all"
-          style={{ borderColor: 'rgba(13,15,20,.1)', background: priorityConfig.bg, color: priorityConfig.color }}
-        >
-          <span className="flex items-center gap-1.5">{priorityConfig.icon} {priorityConfig.label}</span>
-          <ChevronDown size={13} />
-        </button>
-        {showPriorityDD && (
-          <div className="absolute z-10 w-full mt-1 rounded-xl border overflow-hidden" style={{ background: 'white', borderColor: 'rgba(13,15,20,.09)', boxShadow: '0 8px 24px rgba(13,15,20,.12)' }}>
-            {PRIORITY_OPTIONS.map(opt => (
-              <button key={opt.value} onClick={() => { setPriority(opt.value); setShowPriorityDD(false); }}
-                className="w-full flex items-center gap-2 px-3 py-2 text-sm font-semibold transition-colors text-left"
-                style={{ color: opt.color, background: priority === opt.value ? opt.bg : 'transparent' }}
-                onMouseOver={e => (e.currentTarget.style.background = opt.bg)}
-                onMouseOut={e  => (e.currentTarget.style.background = priority === opt.value ? opt.bg : 'transparent')}
-              >
-                {opt.icon} {opt.label}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Responsable */}
-      <div ref={assigneeRef} className="relative">
-        <p className="text-xs font-semibold uppercase tracking-widest mb-2" style={{ color: 'var(--ink-muted)' }}>
-          <UserIcon size={11} className="inline mr-1" /> Responsable
-        </p>
-        <button
-          onClick={() => setShowAssigneeDD(p => !p)}
-          className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl border-[1.5px] text-sm transition-all"
-          style={{ borderColor: 'rgba(13,15,20,.1)', background: 'white', color: assignee ? 'var(--ink)' : 'var(--ink-muted)' }}
-        >
-          {assignee ? (
-            <span className="flex items-center gap-2">
-              <span className="w-5 h-5 rounded-full flex items-center justify-center text-white text-xs font-bold" style={{ background: 'var(--teal)' }}>
-                {assignee.name.charAt(0).toUpperCase()}
-              </span>
-              <span className="truncate text-xs font-medium">{assignee.name}</span>
-            </span>
-          ) : (
-            <span className="flex items-center gap-1.5 text-xs"><UserIcon size={13} /> Sin asignar</span>
-          )}
-          <ChevronDown size={13} />
-        </button>
-        {showAssigneeDD && (
-          <div className="absolute z-10 w-full mt-1 rounded-xl border overflow-hidden" style={{ background: 'white', borderColor: 'rgba(13,15,20,.09)', boxShadow: '0 8px 24px rgba(13,15,20,.12)' }}>
-            <button onClick={() => { setAssignedTo(null); setShowAssigneeDD(false); }}
-              className="w-full flex items-center gap-2 px-3 py-2 text-xs transition-colors text-left"
-              style={{ color: 'var(--ink-muted)', background: !assignedTo ? 'var(--cream)' : 'transparent' }}
-              onMouseOver={e => (e.currentTarget.style.background = 'var(--cream)')}
-              onMouseOut={e  => (e.currentTarget.style.background = !assignedTo ? 'var(--cream)' : 'transparent')}
-            >
-              <UserIcon size={13} /> Sin asignar
-            </button>
-            {boardMembers.map(member => (
-              <button key={member.id} onClick={() => { setAssignedTo(member.id); setShowAssigneeDD(false); }}
-                className="w-full flex items-center gap-2 px-3 py-2 text-xs transition-colors text-left"
-                style={{ color: 'var(--ink)', background: assignedTo === member.id ? 'var(--cream)' : 'transparent' }}
-                onMouseOver={e => (e.currentTarget.style.background = 'var(--cream)')}
-                onMouseOut={e  => (e.currentTarget.style.background = assignedTo === member.id ? 'var(--cream)' : 'transparent')}
-              >
-                <span className="w-5 h-5 rounded-full flex items-center justify-center text-white font-bold flex-shrink-0" style={{ background: 'var(--teal)', fontSize: 10 }}>
-                  {member.name.charAt(0).toUpperCase()}
-                </span>
-                <span className="truncate">{member.name}</span>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Fecha límite */}
-      <div>
-        <p className="text-xs font-semibold uppercase tracking-widest mb-2" style={{ color: 'var(--ink-muted)' }}>
-          <Calendar size={11} className="inline mr-1" /> Fecha límite
-        </p>
-        <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)}
-          className="w-full px-3 py-2 rounded-xl border-[1.5px] text-sm outline-none transition-all"
-          style={{ borderColor: isOverdue ? '#c0392b' : 'rgba(13,15,20,.1)', background: isOverdue ? 'rgba(192,57,43,.06)' : 'white', color: isOverdue ? '#c0392b' : 'var(--ink)' }}
-          onFocus={e => (e.target.style.borderColor = 'var(--amber)')}
-          onBlur={e  => (e.target.style.borderColor = isOverdue ? '#c0392b' : 'rgba(13,15,20,.1)')}
-        />
-        {isOverdue && <p className="text-xs mt-1" style={{ color: '#c0392b' }}>⚠ Fecha vencida</p>}
-        {dueDate && (
-          <button onClick={() => setDueDate('')} className="mt-1 text-xs transition-colors" style={{ color: 'var(--ink-muted)' }}
-            onMouseOver={e => (e.currentTarget.style.color = '#c0392b')}
-            onMouseOut={e  => (e.currentTarget.style.color = 'var(--ink-muted)')}
-          >
-            × Quitar fecha
-          </button>
-        )}
-      </div>
-
-      {/* Creado por */}
-      {task.creator && (
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-widest mb-2" style={{ color: 'var(--ink-muted)' }}>Creado por</p>
-          <div className="flex items-center gap-2">
-            <span className="w-5 h-5 rounded-full flex items-center justify-center text-white text-xs font-bold" style={{ background: 'var(--amber)' }}>
-              {task.creator.name.charAt(0).toUpperCase()}
-            </span>
-            <span className="text-xs" style={{ color: 'var(--ink-soft)' }}>{task.creator.name}</span>
-          </div>
-        </div>
-      )}
-
-      {/* Eliminar */}
-      <div className="pt-4 border-t" style={{ borderColor: 'rgba(13,15,20,.06)' }}>
-        {!confirmDelete ? (
-          <button onClick={() => setConfirmDelete(true)}
-            className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold transition-all border-[1.5px]"
-            style={{ borderColor: 'rgba(192,57,43,.25)', color: '#c0392b', background: 'rgba(192,57,43,.04)' }}
-            onMouseOver={e => (e.currentTarget.style.background = 'rgba(192,57,43,.1)')}
-            onMouseOut={e  => (e.currentTarget.style.background = 'rgba(192,57,43,.04)')}
-          >
-            <Trash2 size={13} /> Eliminar tarea
-          </button>
-        ) : (
-          <div className="space-y-2">
-            <p className="text-xs text-center" style={{ color: '#c0392b' }}>¿Seguro?</p>
-            <div className="flex gap-2">
-              <button onClick={() => setConfirmDelete(false)}
-                className="flex-1 px-2 py-1.5 rounded-lg text-xs border transition-colors"
-                style={{ borderColor: 'rgba(13,15,20,.1)', color: 'var(--ink-muted)' }}
-              >Cancelar</button>
-              <button onClick={handleDelete} disabled={deleting}
-                className="flex-1 px-2 py-1.5 rounded-lg text-xs font-semibold transition-colors"
-                style={{ background: '#c0392b', color: 'white' }}
-              >
-                {deleting ? <Loader2 size={12} className="animate-spin mx-auto" /> : 'Eliminar'}
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
+  // Props compartidas para MetaPanel — se pasan explícitamente en ambas instancias
+  const metaPanelProps: MetaPanelProps = {
+    priority,    setPriority,
+    assignedTo,  setAssignedTo,
+    dueDate,     setDueDate,
+    boardMembers,
+    task,
+    confirmDelete, setConfirmDelete,
+    deleting,    onDelete: handleDelete,
+  };
 
   return (
     <div
@@ -364,23 +429,18 @@ export const TaskDetailModal = ({
       <div
         className="relative w-full flex flex-col overflow-hidden"
         style={{
-          // Móvil: ocupa toda la pantalla salvo 48px arriba (para ver que hay fondo)
-          // Desktop: modal centrado con maxWidth y maxHeight
           maxWidth:     780,
           height:       'calc(100dvh - 48px)',
           maxHeight:    '100dvh',
           background:   'var(--surface)',
-          // Móvil: bordes redondeados solo arriba
           borderRadius: '20px 20px 0 0',
           boxShadow:    '0 -8px 40px rgba(13,15,20,.2)',
           border:       '1px solid rgba(13,15,20,.07)',
           animation:    'slideUp .25s cubic-bezier(.34,1.2,.64,1)',
         }}
-        // Desktop: modal clásico centrado
-        // Usamos una clase sm: para cambiar el border-radius y la animación
         data-modal="task-detail"
       >
-        {/* Handle de arrastre solo en móvil */}
+        {/* Handle móvil */}
         <div className="flex justify-center pt-3 pb-1 sm:hidden flex-shrink-0">
           <div className="w-10 h-1 rounded-full" style={{ background: 'rgba(13,15,20,.15)' }} />
         </div>
@@ -406,7 +466,8 @@ export const TaskDetailModal = ({
               placeholder="Título de la tarea..."
             />
           </div>
-          <button onClick={onClose}
+          <button
+            onClick={onClose}
             className="rounded-full p-1.5 transition-colors mt-0.5 flex-shrink-0"
             style={{ color: 'var(--ink-muted)' }}
             onMouseOver={e => (e.currentTarget.style.background = 'rgba(13,15,20,.06)')}
@@ -419,7 +480,7 @@ export const TaskDetailModal = ({
         {/* ── Body ── */}
         <div className="flex flex-1 overflow-hidden">
 
-          {/* ── Columna principal (scroll) ── */}
+          {/* ── Columna principal ── */}
           <div className="flex-1 overflow-y-auto px-5 sm:px-7 py-5 space-y-5">
 
             {/* Metadatos colapsables — SOLO MÓVIL */}
@@ -430,32 +491,36 @@ export const TaskDetailModal = ({
                 style={{ background: 'var(--cream)', color: 'var(--ink-muted)' }}
               >
                 <span className="flex items-center gap-2">
-                  {/* Resumen rápido de metadatos */}
-                  <span
-                    className="px-2 py-0.5 rounded-full text-xs font-bold"
-                    style={{ background: priorityConfig.bg, color: priorityConfig.color }}
-                  >
-                    {priorityConfig.label}
-                  </span>
-                  {assignee && (
-                    <span className="flex items-center gap-1" style={{ color: 'var(--teal)' }}>
-                      <span className="w-4 h-4 rounded-full flex items-center justify-center text-white font-bold" style={{ background: 'var(--teal)', fontSize: 8 }}>
-                        {assignee.name.charAt(0).toUpperCase()}
-                      </span>
-                      {assignee.name}
-                    </span>
-                  )}
-                  {dueDate && (
-                    <span style={{ color: isOverdue ? '#c0392b' : 'var(--ink-muted)' }}>
-                      {format(parseISO(dueDate), 'dd MMM', { locale: es })}
-                    </span>
-                  )}
+                  {(() => {
+                    const cfg = PRIORITY_OPTIONS.find(o => o.value === priority) ?? PRIORITY_OPTIONS[1];
+                    const assignee = assignedTo ? boardMembers.find(m => m.id === assignedTo) : null;
+                    return (
+                      <>
+                        <span className="px-2 py-0.5 rounded-full text-xs font-bold" style={{ background: cfg.bg, color: cfg.color }}>
+                          {cfg.label}
+                        </span>
+                        {assignee && (
+                          <span className="flex items-center gap-1" style={{ color: 'var(--teal)' }}>
+                            <span className="w-4 h-4 rounded-full flex items-center justify-center text-white font-bold" style={{ background: 'var(--teal)', fontSize: 8 }}>
+                              {assignee.name.charAt(0).toUpperCase()}
+                            </span>
+                            {assignee.name}
+                          </span>
+                        )}
+                        {dueDate && (
+                          <span style={{ color: isOverdue ? '#c0392b' : 'var(--ink-muted)' }}>
+                            {format(parseISO(dueDate), 'dd MMM', { locale: es })}
+                          </span>
+                        )}
+                      </>
+                    );
+                  })()}
                 </span>
                 {metaOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
               </button>
               {metaOpen && (
                 <div className="px-4 py-4 border-t" style={{ borderColor: 'rgba(13,15,20,.06)' }}>
-                  <MetaPanel />
+                  <MetaPanel {...metaPanelProps} />
                 </div>
               )}
             </div>
@@ -484,7 +549,9 @@ export const TaskDetailModal = ({
                   { id: 'comments', label: 'Comentarios', icon: <MessageSquare size={13} /> },
                   { id: 'history',  label: 'Historial',   icon: <Clock size={13} /> },
                 ] as const).map(tab => (
-                  <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id)}
                     className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-all"
                     style={{
                       background: activeTab === tab.id ? 'white' : 'transparent',
@@ -530,7 +597,8 @@ export const TaskDetailModal = ({
                           </div>
                         </div>
                         {comment.user_id === user?.id && (
-                          <button onClick={() => handleDeleteComment(comment.id)}
+                          <button
+                            onClick={() => handleDeleteComment(comment.id)}
                             className="opacity-0 group-hover:opacity-100 p-1 rounded transition-all"
                             style={{ color: 'var(--ink-muted)', alignSelf: 'flex-start' }}
                             onMouseOver={e => (e.currentTarget.style.color = '#c0392b')}
@@ -600,7 +668,7 @@ export const TaskDetailModal = ({
             className="hidden sm:block w-56 flex-shrink-0 overflow-y-auto py-5 px-4 border-l"
             style={{ borderColor: 'rgba(13,15,20,.06)', background: 'rgba(248,247,244,.5)' }}
           >
-            <MetaPanel />
+            <MetaPanel {...metaPanelProps} />
           </div>
         </div>
 
@@ -613,11 +681,21 @@ export const TaskDetailModal = ({
             <p className="text-xs hidden sm:block" style={{ color: 'var(--ink-muted)' }}>Tienes cambios sin guardar</p>
             <div className="flex gap-2 w-full sm:w-auto">
               <button
-                onClick={() => { setTitle(task.title); setDescription(task.description ?? ''); setPriority(task.priority); setDueDate(task.due_date ?? ''); setAssignedTo(task.assigned_to ?? null); }}
+                onClick={() => {
+                  setTitle(task.title);
+                  setDescription(task.description ?? '');
+                  setPriority(task.priority);
+                  setDueDate(task.due_date ?? '');
+                  setAssignedTo(task.assigned_to ?? null);
+                }}
                 className="flex-1 sm:flex-none px-4 py-2 rounded-xl text-xs font-medium border transition-colors"
                 style={{ borderColor: 'rgba(13,15,20,.1)', color: 'var(--ink-muted)' }}
-              >Descartar</button>
-              <button onClick={handleSave} disabled={saving}
+              >
+                Descartar
+              </button>
+              <button
+                onClick={handleSave}
+                disabled={saving}
                 className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-5 py-2 rounded-xl text-xs font-bold transition-all"
                 style={{ fontFamily: "'Syne', sans-serif", background: 'var(--ink)', color: 'var(--paper)', opacity: saving ? 0.7 : 1 }}
               >

@@ -30,7 +30,6 @@ export default function BoardPage() {
   const [deletingBoard, setDeletingBoard] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
-  // ── Filtros ────────────────────────────────────────────────────────────────
   const [filters, setFilters] = useState<ActiveFilters>(EMPTY_FILTERS);
 
   const { columns, createTask, updateTask, moveTask, deleteTask, setColumnsFromBoard } =
@@ -93,9 +92,6 @@ export default function BoardPage() {
   };
 
   // ── Filtrado client-side ────────────────────────────────────────────────────
-  // Las tareas ya están cargadas en memoria — filtramos sin llamadas extra al backend.
-  // Para búsquedas complejas o tableros muy grandes se puede usar el endpoint
-  // GET /boards/:boardId/tasks/search del backend.
   const filteredColumns = useMemo(() => {
     const { q, priorities, assignedTo, columnId, dueBefore, dueAfter } = filters;
 
@@ -109,25 +105,26 @@ export default function BoardPage() {
       .map(col => ({
         ...col,
         tasks: (col.tasks ?? []).filter(task => {
-          // Título
           if (q && !task.title.toLowerCase().includes(q.toLowerCase())) return false;
-
-          // Prioridad
           if (priorities.length > 0 && !priorities.includes(task.priority)) return false;
-
-          // Responsable
           if (assignedTo === 'unassigned' && task.assigned_to !== null) return false;
           if (typeof assignedTo === 'number' && task.assigned_to !== assignedTo) return false;
-
-          // Fecha límite
           if (dueAfter  && task.due_date && isBefore(parseISO(task.due_date), parseISO(dueAfter)))  return false;
           if (dueBefore && task.due_date && isAfter(parseISO(task.due_date),  parseISO(dueBefore))) return false;
           if ((dueAfter || dueBefore) && !task.due_date) return false;
-
           return true;
         }),
       }));
   }, [columns, filters]);
+
+  // ── FIX: cuando hay filtro de columna activo, el drag-and-drop solo puede
+  // soltar tareas en columnas que están visualmente presentes. Le pasamos
+  // filteredColumns como allColumns para que dnd-kit no registre drop zones
+  // de columnas ocultas. Cuando no hay filtro de columna, allColumns = columns
+  // completo para que el drag entre columnas funcione normalmente.
+  const dndAllColumns = useMemo(() => {
+    return filters.columnId !== null ? filteredColumns : columns;
+  }, [filters.columnId, filteredColumns, columns]);
 
   const totalTasks   = useMemo(() => columns.reduce((acc, c) => acc + (c.tasks?.length ?? 0), 0), [columns]);
   const visibleTasks = useMemo(() => filteredColumns.reduce((acc, c) => acc + (c.tasks?.length ?? 0), 0), [filteredColumns]);
@@ -189,7 +186,6 @@ export default function BoardPage() {
         </div>
 
         <div className="flex items-center gap-3">
-          {/* Avatares */}
           <div className="hidden sm:flex -space-x-2">
             {displayMembers.slice(0, 4).map(member => (
               <div
@@ -238,7 +234,6 @@ export default function BoardPage() {
             <span className="hidden sm:inline">Invitar</span>
           </button>
 
-          {/* Menú contextual */}
           <div className="relative">
             <button
               onClick={() => { setShowBoardMenu(p => !p); setConfirmDelete(false); }}
@@ -310,13 +305,13 @@ export default function BoardPage() {
       <div className="flex-1 overflow-hidden flex flex-col">
         <div className="flex-1 overflow-auto sm:p-6 pt-4 sm:pt-6 px-0 sm:px-6">
           <KanbanBoard
-          columns={filteredColumns}
-          allColumns={columns}
-          boardMembers={boardMembers}
-          onTaskMove={moveTask}
-          onTaskCreate={createTask}
-          onTaskUpdate={updateTask}
-          onTaskDelete={deleteTask}
+            columns={filteredColumns}
+            allColumns={dndAllColumns}
+            boardMembers={boardMembers}
+            onTaskMove={moveTask}
+            onTaskCreate={createTask}
+            onTaskUpdate={updateTask}
+            onTaskDelete={deleteTask}
           />
         </div>
       </div>
